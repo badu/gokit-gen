@@ -2,7 +2,9 @@
 
 Provide a .proto file, get a go-kit generated package
 
+# install
 
+`go get -u github.com/badu/gokit-gen`
 
 ## Using ANTLR 
 
@@ -25,7 +27,4 @@ Note : Might want to save this command to `.bashrc`
 Inside /pkg/antlr folder run :
 
 `antlr -Dlanguage=Go -o parser Protobuf3.g4`
-
-Note to self : the grammar definition is very important in terms of making the work easier.
-For example, most elements have `option` (`rpc`,`service`,`proto`,`message`,`enum`) - in order to collect those correctly, I had to redefine global `option` into species, for each kind and for that reason, now there are several similar definitions : `protoOption`,`enumOption`,`messageOption`,`serviceOption` and `rpcOption`. A little repetition makes work easier, isn't it?
  
