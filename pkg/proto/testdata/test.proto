@@ -3,11 +3,6 @@ syntax = "proto3";
 import 'google/protobuf/any.proto';
 import 'google/protobuf/wrappers.proto';
 import 'google/protobuf/struct.proto';
-import 'proto/test_include.proto';
-import 'proto/test_no_namespace.proto';
-import 'proto/test_php_namespace.proto';
-import 'proto/test_empty_php_namespace.proto';
-import 'proto/test_prefix.proto';
 
 package foo;
 
@@ -31,7 +26,7 @@ message TestMessage {
 
   TestEnum optional_enum = 16;
   Sub optional_message = 17;
-  bar.TestInclude optional_included_message = 18;
+  //bar.TestInclude optional_included_message = 18;
   TestMessage recursive = 19;
 
   // Repeated
@@ -103,10 +98,10 @@ message TestMessage {
   // Reserved for non-existing field test.
   // int32 non_exist = 89;
 
-  NoNamespaceMessage optional_no_namespace_message = 91;
-  NoNamespaceEnum optional_no_namespace_enum = 92;
-  repeated NoNamespaceMessage repeated_no_namespace_message = 93;
-  repeated NoNamespaceEnum repeated_no_namespace_enum = 94;
+  //NoNamespaceMessage optional_no_namespace_message = 91;
+  //NoNamespaceEnum optional_no_namespace_enum = 92;
+  //repeated NoNamespaceMessage repeated_no_namespace_message = 93;
+  //repeated NoNamespaceEnum repeated_no_namespace_enum = 94;
 
   enum NestedEnum {
     ZERO = 0;
@@ -185,12 +180,12 @@ message TestPhpDoc {
 }
 
 message TestIncludePrefixMessage {
-  TestPrefix prefix_message = 1;
+  //TestPrefix prefix_message = 1;
 }
 
 message TestIncludeNamespaceMessage {
-  TestNamespace namespace_message = 1;
-  TestEmptyNamespace empty_namespace_message = 2;
+  //TestNamespace namespace_message = 1;
+  //TestEmptyNamespace empty_namespace_message = 2;
 }
 
 // This will cause upb fields not ordered by the order in the generated code.

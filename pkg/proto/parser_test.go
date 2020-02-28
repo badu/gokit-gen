@@ -1,6 +1,7 @@
-package antlr
+package proto
 
 import (
+	"github.com/badu/gokit-gen/pkg/parser"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -28,11 +29,11 @@ func TestListFiles(t *testing.T) {
 		}
 		is := antlr.NewInputStream(string(b))
 		// Create the Lexer
-		lexer := NewantlrLexer(is)
+		lexer := parser.NewantlrLexer(is)
 		stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
 		// Create the Parser
-		p := NewantlrParser(stream)
+		p := parser.NewantlrParser(stream)
 
 		// Finally parse the expression (by walking the tree)
 		var listener ProtoListener
@@ -63,7 +64,7 @@ func TestParser(t *testing.T) {
 					package google.protobuf;`,
 			output: Proto{
 				PackageName: "google.protobuf",
-				Error: ErrNode{
+				Error: &ErrNode{
 					Line:   1,
 					Column: 9,
 					Text:   `line 1:9 mismatched input '"bad_syntax"' expecting {'"proto3"', ''proto3''}`,
@@ -100,7 +101,7 @@ func TestParser(t *testing.T) {
 				Imports: []string{
 					"",
 				},
-				Error: ErrNode{
+				Error: &ErrNode{
 					Line:   2,
 					Column: 11,
 					Text:   `line 2:11 mismatched input '<EOF>' expecting {'public', 'weak', StrLit}`,
@@ -115,7 +116,7 @@ func TestParser(t *testing.T) {
 				Imports: []string{
 					"",
 				},
-				Error: ErrNode{
+				Error: &ErrNode{
 					Line:   2,
 					Column: 12,
 					Text:   "line 2:12 mismatched input 'bad_import_name' expecting {'public', 'weak', StrLit}",
@@ -161,7 +162,7 @@ func TestParser(t *testing.T) {
 						Name: "Struct",
 					},
 				},
-				Error: ErrNode{
+				Error: &ErrNode{
 					Line:   3,
 					Column: 21,
 					Text:   "line 3:21 mismatched input '<EOF>' expecting {'bool', 'bytes', 'double', 'enum', 'fixed32', 'fixed64', 'float', 'int32', 'int64', 'map', 'message', 'oneof', 'option', 'package', 'repeated', 'reserved', 'rpc', 'service', 'sfixed32', 'sfixed64', 'sint32', 'sint64', 'stream', 'string', 'syntax', 'uint32', 'uint64', 'weak', '}', ';', '.', Ident}",
@@ -785,8 +786,8 @@ func TestParser(t *testing.T) {
 				Services: []Service{
 					Service{
 						Name: "myService",
-						RPCs: []RPC{
-							RPC{
+						Methods: []Method{
+							Method{
 								Name: "Search",
 								In: []Field{
 									Field{
@@ -799,7 +800,7 @@ func TestParser(t *testing.T) {
 									},
 								},
 							},
-							RPC{
+							Method{
 								Name: "SearchStream",
 								In: []Field{
 									Field{
@@ -813,7 +814,7 @@ func TestParser(t *testing.T) {
 								},
 								IsClientStreaming: true,
 							},
-							RPC{
+							Method{
 								Name: "SearchStream",
 								In: []Field{
 									Field{
@@ -827,7 +828,7 @@ func TestParser(t *testing.T) {
 								},
 								IsServerStreaming: true,
 							},
-							RPC{
+							Method{
 								Name: "SearchStream",
 								In: []Field{
 									Field{
@@ -874,11 +875,11 @@ func TestParser(t *testing.T) {
 		t.Logf("running test id %d", tc.id)
 		is := antlr.NewInputStream(tc.input)
 		// Create the Lexer
-		lexer := NewantlrLexer(is)
+		lexer := parser.NewantlrLexer(is)
 		stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
 		// Create the Parser
-		parser := NewantlrParser(stream)
+		parser := parser.NewantlrParser(stream)
 		// remove ConsoleErrorListener
 		parser.RemoveErrorListeners()
 

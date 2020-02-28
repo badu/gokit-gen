@@ -1,6 +1,6 @@
 // Code generated from antlr.g4 by ANTLR 4.8. DO NOT EDIT.
 
-package antlr
+package parser
 
 import (
 	"fmt"

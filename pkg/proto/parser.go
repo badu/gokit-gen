@@ -1,14 +1,16 @@
-package antlr
+package proto
 
 import (
 	"fmt"
 	"github.com/antlr/antlr4/runtime/Go/antlr"
+	"github.com/badu/gokit-gen/pkg/parser"
 	"log"
 	"strconv"
+	"strings"
 )
 
 type ProtoListener struct {
-	*BaseantlrListener
+	*parser.BaseantlrListener
 	Proto Proto
 }
 
@@ -21,16 +23,16 @@ type Proto struct {
 	Messages    []Message
 	Services    []Service
 	Enums       []Enum
-	Error       ErrNode
+	Error       *ErrNode
 }
 
 type Service struct {
 	Name    string
-	RPCs    []RPC
+	Methods []Method
 	Options []Option
 }
 
-type RPC struct {
+type Method struct {
 	Name              string
 	In                []Field
 	Out               []Field
@@ -55,6 +57,10 @@ type Enum struct {
 	IsNested bool
 }
 
+func (f *Enum) PublicName() string {
+	return strings.ToUpper(f.Name[:1]) + f.Name[1:]
+}
+
 type Field struct {
 	Name       string
 	Kind       string
@@ -66,6 +72,102 @@ type Field struct {
 	IsMap      bool
 	IsOneOf    bool
 	IsReserved bool
+}
+
+func (f *Field) IsBasic() bool {
+	switch f.Kind {
+	case "unsafe.Pointer", "bool", "byte",
+		"complex64", "complex128",
+		"error",
+		"float32", "float64", "float",
+		"int", "int8", "int16", "int32", "int64",
+		"rune", "string",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+		return true
+	}
+	return false
+}
+
+func getKind(kind string) string {
+	switch kind {
+	case "bool":
+		return "bool"
+	case "bytes":
+		return "[]byte"
+	case "double":
+		return "float64"
+	case "fixed32":
+		return "uint32"
+	case "fixed64":
+		return "uint64"
+	case "float":
+		return "float32"
+	case "int32":
+		return "int32"
+	case "int64":
+		return "int64"
+	case "sfixed32":
+		return "int32"
+	case "sfixed64":
+		return "int64"
+	case "sint32":
+		return "int32"
+	case "sint64":
+		return "int64"
+	case "string":
+		return "string"
+	case "uint32":
+		return "uint32"
+	case "uint64":
+		return "uint64"
+	}
+	return kind
+}
+
+func (f *Field) GoKind() string {
+	switch f.Kind {
+	case "bool":
+		return "bool"
+	case "bytes":
+		return "[]byte"
+	case "double":
+		return "float64"
+	case "fixed32":
+		return "uint32"
+	case "fixed64":
+		return "uint64"
+	case "float":
+		return "float32"
+	case "int32":
+		return "int32"
+	case "int64":
+		return "int64"
+	case "map":
+		return "map[" + getKind(f.MapKind.Key) + "]" + getKind(f.MapKind.Value)
+	case "sfixed32":
+		return "int32"
+	case "sfixed64":
+		return "int64"
+	case "sint32":
+		return "int32"
+	case "sint64":
+		return "int64"
+	case "string":
+		return "string"
+	case "uint32":
+		return "uint32"
+	case "uint64":
+		return "uint64"
+	}
+	return f.Kind
+}
+
+func (f *Field) PublicName() string {
+	return strings.ToUpper(f.Name[:1]) + f.Name[1:]
+}
+
+func (f *Field) IsTimestamp() bool {
+	return false
 }
 
 type Option struct {
@@ -92,7 +194,7 @@ type ErrorListener struct {
 }
 
 func (uel *ErrorListener) SyntaxError(rec antlr.Recognizer, offend interface{}, line int, column int, msg string, e antlr.RecognitionException) {
-	uel.Listener.Proto.Error = ErrNode{Line: line, Column: column, Text: "line " + strconv.Itoa(line) + ":" + strconv.Itoa(column) + " " + msg}
+	uel.Listener.Proto.Error = &ErrNode{Line: line, Column: column, Text: "line " + strconv.Itoa(line) + ":" + strconv.Itoa(column) + " " + msg}
 }
 
 func getIdent(target *string, node antlr.TerminalNode) {
@@ -102,8 +204,8 @@ func getIdent(target *string, node antlr.TerminalNode) {
 	*target = node.GetText()
 }
 
-func extractConstant(ctx IConstantContext) string {
-	ct, ok := ctx.(*ConstantContext)
+func extractConstant(ctx parser.IConstantContext) string {
+	ct, ok := ctx.(*parser.ConstantContext)
 	if !ok {
 		log.Print("expecting *ConstantContext")
 		return ""
@@ -133,11 +235,11 @@ func extractConstant(ctx IConstantContext) string {
 	return ct.GetText()
 }
 
-func makeOptionVars(ctx []IOptionDeclVarContext) []KeyValue {
+func makeOptionVars(ctx []parser.IOptionDeclVarContext) []KeyValue {
 	var result []KeyValue
 
 	for _, dvDecl := range ctx {
-		dvCtx, ok := dvDecl.(*OptionDeclVarContext)
+		dvCtx, ok := dvDecl.(*parser.OptionDeclVarContext)
 		if !ok {
 			log.Print("expecting *OptionDeclVarContext")
 			continue
@@ -157,9 +259,9 @@ func makeOptionVars(ctx []IOptionDeclVarContext) []KeyValue {
 	return result
 }
 
-func makeOption(ctx *OptionContext) Option {
+func makeOption(ctx *parser.OptionContext) Option {
 	var result Option
-	nameCtx, ok := ctx.OptionName().(*OptionNameContext)
+	nameCtx, ok := ctx.OptionName().(*parser.OptionNameContext)
 	if !ok {
 		log.Print("expecting *OptionNameContext")
 		return result
@@ -169,7 +271,7 @@ func makeOption(ctx *OptionContext) Option {
 	}
 
 	if ctx.OptionDecl() != nil {
-		od, ok := ctx.OptionDecl().(*OptionDeclContext)
+		od, ok := ctx.OptionDecl().(*parser.OptionDeclContext)
 		if !ok {
 			log.Print("expecting *OptionDeclContext")
 			return result
@@ -185,10 +287,10 @@ func makeOption(ctx *OptionContext) Option {
 	return result
 }
 
-func makeOptions(ctx []IOptionContext) []Option {
+func makeOptions(ctx []parser.IOptionContext) []Option {
 	var result []Option
 	for _, optDecl := range ctx {
-		optCtx, ok := optDecl.(*OptionContext)
+		optCtx, ok := optDecl.(*parser.OptionContext)
 		if !ok {
 			log.Print("expecting *OptionContext")
 			continue
@@ -198,10 +300,10 @@ func makeOptions(ctx []IOptionContext) []Option {
 	return result
 }
 
-func makeKeyValueOptions(ctx []IKeyValueContext) []Option {
+func makeKeyValueOptions(ctx []parser.IKeyValueContext) []Option {
 	var result []Option
 	for _, kvDecl := range ctx {
-		kvCtx, ok := kvDecl.(*KeyValueContext)
+		kvCtx, ok := kvDecl.(*parser.KeyValueContext)
 		if !ok {
 			log.Print("expecting *FieldOptContext")
 			continue
@@ -221,10 +323,10 @@ func makeKeyValueOptions(ctx []IKeyValueContext) []Option {
 	return result
 }
 
-func makeEnumFields(ctx []IEnumFieldContext) []Field {
+func makeEnumFields(ctx []parser.IEnumFieldContext) []Field {
 	var result []Field
 	for _, enuFieldDecl := range ctx {
-		enuFieldCtx, ok := enuFieldDecl.(*EnumFieldContext)
+		enuFieldCtx, ok := enuFieldDecl.(*parser.EnumFieldContext)
 		if !ok {
 			log.Print("expecting *EnumFieldContext")
 			continue
@@ -240,10 +342,10 @@ func makeEnumFields(ctx []IEnumFieldContext) []Field {
 	return result
 }
 
-func makeEnums(ctx []IEnumContext) []Enum {
+func makeEnums(ctx []parser.IEnumContext) []Enum {
 	var result []Enum
 	for _, enuDecl := range ctx {
-		enumCtx, ok := enuDecl.(*EnumContext)
+		enumCtx, ok := enuDecl.(*parser.EnumContext)
 		if !ok {
 			log.Print("expecting *EnumContext")
 			continue
@@ -252,7 +354,7 @@ func makeEnums(ctx []IEnumContext) []Enum {
 		enum := Enum{}
 		getIdent(&enum.Name, enumCtx.Ident())
 
-		declCtx, ok := enumCtx.EnumDecl().(*EnumDeclContext)
+		declCtx, ok := enumCtx.EnumDecl().(*parser.EnumDeclContext)
 		if !ok {
 			log.Print("expecting *EnumContext")
 			continue
@@ -269,10 +371,10 @@ func makeEnums(ctx []IEnumContext) []Enum {
 	return result
 }
 
-func makeFields(ctx []IFieldContext) []Field {
+func makeFields(ctx []parser.IFieldContext) []Field {
 	var result []Field
 	for _, afCtx := range ctx {
-		fieldCtx, ok := afCtx.(*FieldContext)
+		fieldCtx, ok := afCtx.(*parser.FieldContext)
 		if !ok {
 			log.Print("expecting *FieldContext")
 			continue
@@ -294,7 +396,7 @@ func makeFields(ctx []IFieldContext) []Field {
 		field := Field{Name: fieldCtx.Ident().GetText(), Kind: fieldCtx.FieldType().GetText(), Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil}
 
 		if fieldCtx.FieldOpts() != nil {
-			fieldOptsCtx, ok := fieldCtx.FieldOpts().(*FieldOptsContext)
+			fieldOptsCtx, ok := fieldCtx.FieldOpts().(*parser.FieldOptsContext)
 			if !ok {
 				log.Printf("expecting *FieldOptsContext got %T", fieldCtx.FieldOpts())
 				continue
@@ -308,10 +410,10 @@ func makeFields(ctx []IFieldContext) []Field {
 	return result
 }
 
-func makeMapFields(ctx []IMapFieldContext) []Field {
+func makeMapFields(ctx []parser.IMapFieldContext) []Field {
 	var result []Field
 	for _, mapDecl := range ctx {
-		fieldCtx, ok := mapDecl.(*MapFieldContext)
+		fieldCtx, ok := mapDecl.(*parser.MapFieldContext)
 		if !ok {
 			log.Print("expecting *MapFieldContext")
 			continue
@@ -341,7 +443,7 @@ func makeMapFields(ctx []IMapFieldContext) []Field {
 		field := Field{Name: fieldCtx.Ident().GetText(), Pos: fieldCtx.IntLit().GetText(), MapKind: mapInfo, IsMap: true}
 
 		if fieldCtx.FieldOpts() != nil {
-			fieldOptsCtx, ok := fieldCtx.FieldOpts().(*FieldOptsContext)
+			fieldOptsCtx, ok := fieldCtx.FieldOpts().(*parser.FieldOptsContext)
 			if !ok {
 				log.Printf("expecting *FieldOptsContext got %T", fieldCtx.FieldOpts())
 				continue
@@ -355,13 +457,13 @@ func makeMapFields(ctx []IMapFieldContext) []Field {
 	return result
 }
 
-func makeOneOfFields(ctx []IOneofContext) (string, []Field) {
+func makeOneOfFields(ctx []parser.IOneofContext) (string, []Field) {
 	var (
 		result    []Field
 		fieldName string
 	)
 	for _, ooDecl := range ctx {
-		oneOfCtx, ok := ooDecl.(*OneofContext)
+		oneOfCtx, ok := ooDecl.(*parser.OneofContext)
 		if !ok {
 			log.Print("expecting *OneofContext")
 			continue
@@ -372,7 +474,7 @@ func makeOneOfFields(ctx []IOneofContext) (string, []Field) {
 		}
 		fieldName = oneOfCtx.Ident().GetText()
 		for _, s := range oneOfCtx.AllOneofField() {
-			oofCtx, ok := s.(*OneofFieldContext)
+			oofCtx, ok := s.(*parser.OneofFieldContext)
 			if !ok {
 				log.Print("expecting *OneofFieldContext")
 			}
@@ -392,7 +494,7 @@ func makeOneOfFields(ctx []IOneofContext) (string, []Field) {
 			}
 			field := Field{Name: oofCtx.Ident().GetText(), Kind: oofCtx.FieldType().GetText(), Pos: oofCtx.IntLit().GetText()}
 			if oofCtx.FieldOpts() != nil {
-				fieldOptsCtx, ok := oofCtx.FieldOpts().(*FieldOptsContext)
+				fieldOptsCtx, ok := oofCtx.FieldOpts().(*parser.FieldOptsContext)
 				if !ok {
 					log.Printf("expecting *FieldOptsContext got %T", oofCtx.FieldOpts())
 					continue
@@ -406,29 +508,29 @@ func makeOneOfFields(ctx []IOneofContext) (string, []Field) {
 	return fieldName, result
 }
 
-func makeMessage(ctx *MessageContext) Message {
+func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 	var result Message
 	getIdent(&result.Name, ctx.Ident())
 
-	declCtx, ok := ctx.MessageDecl().(*MessageDeclContext)
+	declCtx, ok := ctx.MessageDecl().(*parser.MessageDeclContext)
 	if !ok {
 		log.Print("expecting *MessageDeclContext")
 		return result
 	}
 	for _, rDecl := range declCtx.AllReserved() {
-		resCtx, ok := rDecl.(*ReservedContext)
+		resCtx, ok := rDecl.(*parser.ReservedContext)
 		if !ok {
 			log.Print("expecting *ReservedContext")
 			continue
 		}
 		if resCtx.Ranges() != nil {
-			rangeCtx, ok := resCtx.Ranges().(*RangesContext)
+			rangeCtx, ok := resCtx.Ranges().(*parser.RangesContext)
 			if !ok {
 				log.Print("expecting *RangesContext")
 				continue
 			}
 			for _, rangeDef := range rangeCtx.AllRangeDef() {
-				rCtx, ok := rangeDef.(*RangeDefContext)
+				rCtx, ok := rangeDef.(*parser.RangeDefContext)
 				if !ok {
 					log.Print("expecting *RangeDefContext")
 					continue
@@ -440,7 +542,7 @@ func makeMessage(ctx *MessageContext) Message {
 		}
 
 		if resCtx.FieldNames() != nil {
-			fnCtx, ok := resCtx.FieldNames().(*FieldNamesContext)
+			fnCtx, ok := resCtx.FieldNames().(*parser.FieldNamesContext)
 			if !ok {
 				log.Print("expecting *FieldNamesContext")
 				continue
@@ -455,20 +557,23 @@ func makeMessage(ctx *MessageContext) Message {
 
 	msgEnums := makeEnums(declCtx.AllEnum())
 	result.Enums = append(result.Enums, msgEnums...)
+	proto.Enums = append(proto.Enums, msgEnums...)
 
 	msgFields := makeFields(declCtx.AllField())
 	result.Fields = append(result.Fields, msgFields...)
 
 	for _, nestedMsg := range declCtx.AllMessage() {
-		nestMsgCtx, ok := nestedMsg.(*MessageContext)
+		nestMsgCtx, ok := nestedMsg.(*parser.MessageContext)
 		if !ok {
 			log.Print("expecting *MessageContext")
 			continue
 		}
-		nestedMsg := makeMessage(nestMsgCtx)
+		nestedMsg := makeMessage(nestMsgCtx, proto)
 		nestedMsg.IsNested = true
 		result.Messages = append(result.Messages, nestedMsg)
+		proto.Messages = append(proto.Messages, nestedMsg)
 	}
+
 	mapFields := makeMapFields(declCtx.AllMapField())
 	result.Fields = append(result.Fields, mapFields...)
 	if declCtx.AllOneof() != nil {
@@ -488,10 +593,10 @@ func makeNameAndKinds(idents []antlr.TerminalNode) []Field {
 	return result
 }
 
-func makeRPCs(ctx []IRpcContext) []RPC {
-	var result []RPC
+func makeMethods(ctx []parser.IRpcContext) []Method {
+	var result []Method
 	for _, rpcDecl := range ctx {
-		rpcCtx, ok := rpcDecl.(*RpcContext)
+		rpcCtx, ok := rpcDecl.(*parser.RpcContext)
 		if !ok {
 			log.Print("expecting *RpcContext")
 			continue
@@ -502,7 +607,7 @@ func makeRPCs(ctx []IRpcContext) []RPC {
 		}
 		serverStream := false
 		if rpcCtx.ServerStreams() != nil {
-			s, ok := rpcCtx.ServerStreams().(*ServerStreamsContext)
+			s, ok := rpcCtx.ServerStreams().(*parser.ServerStreamsContext)
 			if ok {
 				serverStream = s.STREAM() != nil
 			} else {
@@ -511,26 +616,26 @@ func makeRPCs(ctx []IRpcContext) []RPC {
 		}
 		clientStream := false
 		if rpcCtx.ClientStreams() != nil {
-			s, ok := rpcCtx.ClientStreams().(*ClientStreamsContext)
+			s, ok := rpcCtx.ClientStreams().(*parser.ClientStreamsContext)
 			if ok {
 				clientStream = s.STREAM() != nil
 			} else {
 				log.Print("expecting *ClientStreamsContext")
 			}
 		}
-		rpc := RPC{Name: rpcCtx.RpcName().GetText(), IsServerStreaming: serverStream, IsClientStreaming: clientStream}
+		rpc := Method{Name: rpcCtx.RpcName().GetText(), IsServerStreaming: serverStream, IsClientStreaming: clientStream}
 
 		rpcOpts := makeOptions(rpcCtx.AllOption())
 		rpc.Options = append(rpc.Options, rpcOpts...)
 
-		rpcParams, ok := rpcCtx.RpcParams().(*RpcParamsContext)
+		rpcParams, ok := rpcCtx.RpcParams().(*parser.RpcParamsContext)
 		if !ok {
 			log.Print("expecting *RpcParamsContext")
 			continue
 		}
 		rpc.In = append(rpc.In, makeNameAndKinds(rpcParams.AllIdent())...)
 
-		rpcRets, ok := rpcCtx.RpcReturns().(*RpcReturnsContext)
+		rpcRets, ok := rpcCtx.RpcReturns().(*parser.RpcReturnsContext)
 		if !ok {
 			log.Print("expecting *RpcReturnsContext")
 			continue
@@ -542,7 +647,7 @@ func makeRPCs(ctx []IRpcContext) []RPC {
 	return result
 }
 
-func (s *ProtoListener) ExitProto(ctx *ProtoContext) {
+func (s *ProtoListener) ExitProto(ctx *parser.ProtoContext) {
 	protoOpts := makeOptions(ctx.AllOption())
 	s.Proto.Options = append(s.Proto.Options, protoOpts...)
 
@@ -550,18 +655,18 @@ func (s *ProtoListener) ExitProto(ctx *ProtoContext) {
 	s.Proto.Enums = append(s.Proto.Enums, enums...)
 
 	for _, msgDecl := range ctx.AllMessage() {
-		msgCtx, ok := msgDecl.(*MessageContext)
+		msgCtx, ok := msgDecl.(*parser.MessageContext)
 		if !ok {
 			log.Print("expecting *MessageContext")
 			return
 		}
 
-		msg := makeMessage(msgCtx)
+		msg := makeMessage(msgCtx, &s.Proto)
 		s.Proto.Messages = append(s.Proto.Messages, msg)
 	}
 
 	for _, impDecl := range ctx.AllImports() {
-		impCtx, ok := impDecl.(*ImportsContext)
+		impCtx, ok := impDecl.(*parser.ImportsContext)
 		if !ok {
 			log.Print("expecting *ImportsContext")
 			return
@@ -569,16 +674,21 @@ func (s *ProtoListener) ExitProto(ctx *ProtoContext) {
 
 		importStr := ""
 		getIdent(&importStr, impCtx.StrLit())
-		s.Proto.Imports = append(s.Proto.Imports, importStr)
+		unquotedImport, err := strconv.Unquote(importStr)
+		if err != nil {
+			log.Printf("error unquoting : %v", err)
+			continue
+		}
+		s.Proto.Imports = append(s.Proto.Imports, unquotedImport)
 	}
 
 	for _, pkgDecl := range ctx.AllPackageName() {
-		pkgCtx, ok := pkgDecl.(*PackageNameContext)
+		pkgCtx, ok := pkgDecl.(*parser.PackageNameContext)
 		if !ok {
 			log.Print("expecting *PackageNameContext")
 			return
 		}
-		fiCtx, ok := pkgCtx.FullIdent().(*FullIdentContext)
+		fiCtx, ok := pkgCtx.FullIdent().(*parser.FullIdentContext)
 		if !ok {
 			log.Print("expecting *FullIdentContext")
 			return
@@ -596,7 +706,7 @@ func (s *ProtoListener) ExitProto(ctx *ProtoContext) {
 	}
 
 	for _, svcDecl := range ctx.AllService() {
-		svcCtx, ok := svcDecl.(*ServiceContext)
+		svcCtx, ok := svcDecl.(*parser.ServiceContext)
 		if !ok {
 			log.Print("expecting *ServiceContext")
 			return
@@ -605,8 +715,8 @@ func (s *ProtoListener) ExitProto(ctx *ProtoContext) {
 		getIdent(&svc.Name, svcCtx.Ident())
 		svcOpts := makeOptions(svcCtx.AllOption())
 		svc.Options = append(svc.Options, svcOpts...)
-		svcRpcs := makeRPCs(svcCtx.AllRpc())
-		svc.RPCs = append(svc.RPCs, svcRpcs...)
+		svcMethods := makeMethods(svcCtx.AllRpc())
+		svc.Methods = append(svc.Methods, svcMethods...)
 		s.Proto.Services = append(s.Proto.Services, svc)
 	}
 }
