@@ -1,0 +1,36 @@
+{{/* functions signature */}}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "errors"
+    "context"	
+    
+    "github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+)
+func createRepository() (Repository, error) {
+    var conn interface{}
+    // TODO : make connection
+    logger := log.NewLogfmtLogger(os.Stderr)
+	logger = log.With(logger, "caller", log.Caller(5)) 
+	logger = level.NewFilter(logger, level.AllowDebug())
+
+	return NewRepository(logger, conn), nil
+}
+
+{{ range .Services}}
+    {{- range .Methods }}
+   func Test{{.Name}}(t *testing.T){
+        repo, err := createRepository()
+        if err!=nil{
+            t.Fatalf("error : %v",err)
+        }
+        _ = repo
+        t.Skip("not implemented")
+    }
+    {{- end }}
+{{- end }}
+
+{{- end }}{{/* we have service */}}

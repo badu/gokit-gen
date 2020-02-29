@@ -6,6 +6,16 @@ Provide a .proto file, get a go-kit generated package
 
 `go get -u github.com/badu/gokit-gen`
 
+# parameters
+
+1. proto file - can be absolute or relative
+
+2. templates folder ("default" uses default templates) - can be absolute or relative
+
+3. full package, for imports in generated tests
+
+4. optional, deployment folder - can be absolute or relative
+
 ## Using ANTLR 
 
 This is not needed, just in case you want to alter grammar file

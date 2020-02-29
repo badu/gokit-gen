@@ -8,17 +8,19 @@ import (
 	"github.com/antlr/antlr4/runtime/Go/antlr"
 	"github.com/badu/gokit-gen/pkg/parser"
 	"github.com/badu/gokit-gen/pkg/proto"
-	"github.com/huandu/xstrings"
+	_ "github.com/badu/gokit-gen/statik"
+	"github.com/rakyll/statik/fs"
 	"go/format"
 	"golang.org/x/tools/imports"
-	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"text/template"
 )
 
 func loadProtoFile(wd, src string) ([]byte, error) {
@@ -178,14 +180,42 @@ func templateFileNames(templateDir string) ([]string, error) {
 	return fileNames, err
 }
 
-func buildContent(templateDir, templateFilename string, funcMap template.FuncMap, prt *proto.Proto) ([]byte, error) {
+func provideFile(statikFS http.FileSystem, path string) (string, error) {
+	r, err := statikFS.Open(path)
+	if err != nil {
+		log.Printf("error finding file : %q", path)
+		return "", err
+	}
+	defer r.Close()
+	contents, err := ioutil.ReadAll(r)
+	if err != nil {
+		log.Printf("error reading file : %q", path)
+		return "", err
+	}
+	return string(contents), nil
+}
+
+func buildContent(statikFS http.FileSystem, templateDir, templateFilename string, funcMap template.FuncMap, prt *proto.Proto) ([]byte, error) {
+	var (
+		tmpl *template.Template
+		err  error
+	)
 	// initialize template engine
 	fullPath := filepath.Join(templateDir, templateFilename)
 	templateName := filepath.Base(fullPath)
-	// template init
-	tmpl, err := template.New(templateName).Funcs(funcMap).ParseFiles(fullPath)
-	if err != nil {
-		return nil, err
+	if templateDir == "default" {
+		content, err := provideFile(statikFS, templateFilename)
+		if err != nil {
+			return nil, err
+		}
+
+		tmpl, err = template.New(templateName).Funcs(funcMap).Parse(content)
+	} else {
+		// template init
+		tmpl, err = template.New(templateName).Funcs(funcMap).ParseFiles(fullPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// generate the content
@@ -208,6 +238,7 @@ func buildContent(templateDir, templateFilename string, funcMap template.FuncMap
 	return formatted, nil
 }
 
+// protoc --go_out=plugins=grpc:. stock_shared.proto
 func run(args []string, stdout io.Writer) error {
 	var err error
 	if len(args) < 4 {
@@ -219,23 +250,45 @@ func run(args []string, stdout io.Writer) error {
 
 		return errors.New("not enough valid arguments received")
 	}
+
 	wd, _ := os.Getwd()
 	wd += "/"
 	log.Printf("working in folder folder : %q", wd)
 
-	templateDir := ""
-	relativePathTemplatesLookup := filepath.Base(args[2]) == args[2]
-	if !relativePathTemplatesLookup {
-		templateDir, err = filepath.Abs(wd + args[2])
-		if err != nil {
-			log.Fatalf("folder not found while looking error reading templates dir : %v", err)
+	statikFS, err := fs.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	templateDir := args[2]
+	if templateDir != "default" {
+		relativePathTemplatesLookup := filepath.Base(args[2]) == args[2]
+		if !relativePathTemplatesLookup {
+			templateDir, err = filepath.Abs(wd + args[2])
+			if err != nil {
+				log.Fatalf("folder not found while looking error reading templates dir : %v", err)
+			}
 		}
 	}
 
 	var templates []string
-	if templates, err = templateFileNames(templateDir); err != nil {
-		return err
+	if templateDir != "default" {
+		if templates, err = templateFileNames(templateDir); err != nil {
+			return err
+		}
+	} else {
+		err = fs.Walk(statikFS, "/", func(path string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if path != "/" {
+				log.Printf("adding %q", path)
+				templates = append(templates, path)
+			}
+			return nil
+		})
 	}
+
 	fname := filepath.Base(args[1])
 	fdir := filepath.Dir(args[1]) + "/"
 	var result *proto.Proto
@@ -266,7 +319,7 @@ func run(args []string, stdout io.Writer) error {
 	var enumNamesMap = make(map[string]struct{})
 	// make enum names map
 	for _, enum := range result.Enums {
-		enumNamesMap[enum.Name] = struct{}{}
+		enumNamesMap[enum.PublicName()] = struct{}{}
 	}
 	// check has streaming
 	hasStreaming := false
@@ -335,21 +388,6 @@ out:
 		"lowerFirst": func(s string) string {
 			return strings.ToLower(s[:1]) + s[1:]
 		},
-		"camelCase": func(s string) string {
-			if len(s) > 1 {
-				return xstrings.ToCamelCase(s)
-			}
-			return strings.ToUpper(s[:1])
-		},
-		"lowerCamelCase": func(s string) string {
-			if len(s) > 1 {
-				s = xstrings.ToCamelCase(s)
-			}
-			return strings.ToLower(s[:1]) + s[1:]
-		},
-		"kebabCase": func(s string) string {
-			return strings.Replace(xstrings.ToSnakeCase(s), "_", "-", -1)
-		},
 		"contains": func(sub, s string) bool {
 			return strings.Contains(s, sub)
 		},
@@ -366,7 +404,6 @@ out:
 			}
 			return slice.Index(i).Interface()
 		},
-		"snakeCase": xstrings.ToSnakeCase,
 
 		"projectName": func() string {
 			return strings.Replace(fname, filepath.Ext(fname), "", -1)
@@ -387,18 +424,33 @@ out:
 		"go_package": func() string {
 			return goPackage
 		},
+		"pb_package": func() string {
+			return result.PackageName
+		},
+		"messageByKind": func(kind string) (*proto.Message, error) {
+			for _, message := range result.Messages {
+				if message.Name == kind {
+					return &message, nil
+				}
+			}
+			return nil, errors.New("message " + kind + " not found")
+		},
 	}
 
 	for _, tpl := range templates {
-		content, err := buildContent(templateDir, tpl, funcMap, result)
+		content, err := buildContent(statikFS, templateDir, tpl, funcMap, result)
 		if err != nil {
 			log.Printf("error processing %q : %v", tpl, err)
 			if len(content) > 0 {
 				log.Printf("partial result : %s", string(content))
 			}
-			continue
+			//continue // TODO : allow continue
 		}
 		if !debug {
+			if len(content) == 0 {
+				continue
+			}
+			tpl = strings.Replace(tpl, ".tmpl", "", -1)
 			srcFile, err := os.Create(deployTo + filepath.Base(tpl))
 			if err != nil {
 				log.Printf("error creating file : %v", err)

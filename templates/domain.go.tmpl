@@ -1,0 +1,41 @@
+package {{ projectName }}
+
+import(
+    pb "{{ go_package }}"
+)
+{{/* enums */}}
+{{- range .Enums}}
+  {{ $enumName := .PublicName }}
+  type {{ $enumName }} int
+  const(
+  {{- range .Fields }}
+     {{ .PublicName }} {{ $enumName }} = {{ .Kind }}
+  {{- end }}
+  ){{/* end Go const*/}}
+{{- end }}
+{{/*end enums*/}}
+
+{{/* messages */}}
+{{ range .Messages }}
+ type {{ .Name }} struct {
+  {{- range .Fields }}
+     {{- if .IsOneOf }}
+          // TODO oneOf {{ .PublicName }} {{.GoKind }}
+     {{- else if .IsMap }}
+          // TODO map {{ .PublicName }} {{.GoKind }}
+     {{- else if .IsReserved }}
+          // TODO reserved {{ .PublicName }} {{.GoKind }}
+     {{- else if .IsBasic }}
+         {{ .PublicName }} {{ .GoKind }}  
+     {{- else if .IsRepeated}}
+         {{ .PublicName }} []{{ .GoKind }}
+     {{- else if isEnumField . }}
+         {{ .PublicName }} {{ .GoKind }} 
+     {{- else }}
+         {{ .PublicName }} *{{ .GoKind }}
+     {{- end }}
+  {{- end }}
+  {{/* end range .Field */}}
+}
+{{ end}}
+{{/* end range .File.MessageType */}}

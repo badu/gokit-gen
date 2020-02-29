@@ -1,0 +1,107 @@
+package {{ projectName }}
+
+import(
+    pb "{{ go_package }}"
+)
+{{/* enum transformers */}}
+{{- range .Enums }}
+  {{ $enumName := .PublicName }}
+  {{ $parentName := .ParentName }}
+   // enum p *pb.{{.ParentName}}_{{.Name}} to {{ $enumName }}
+  func New{{ $enumName }}FromPB(msg *pb.{{.ParentName}}_{{.Name}}) {{ $enumName }}{
+      if msg == nil{
+            return {{ with .Fields }} {{ .FirstPublicName }} {{ end }}
+      }
+      switch *msg{
+    {{- range .Fields}}
+        case pb.{{ $parentName }}_{{ .Name }}:
+            return {{ .PublicName }}
+    {{- end }}{{/* end range .Value */}}
+        default:
+            return {{ with .Fields }} {{ .FirstPublicName }} {{ end }}
+    }
+  }
+  // enum {{ $enumName }} to pb.{{.ParentName}}_{{.Name}}
+  func New{{ $enumName }}ToPB(msg {{.ParentName}}{{.Name}})pb.{{.ParentName}}_{{.Name}}{
+      var result pb.{{.ParentName}}_{{.Name}}      
+      switch msg{
+           {{- range .Fields}}
+        case {{ .PublicName }}:
+            return pb.{{ $parentName }}_{{ .Name }}
+    {{- end }}{{/* end range .Value */}}
+        default:
+            return result
+      }
+  }
+{{- end }}
+{{/* end enum transformers */}}
+
+
+{{/* transformers*/}}
+{{ range .Messages }}
+{{ $messageName := .Name }}
+// transformer *pb.{{.Name}} to *{{.Name}}
+ func New{{ .Name }}FromPB (msg *pb.{{.Name}}) *{{.Name}} {
+    if msg == nil{
+        return nil
+    }    
+    var result {{ $messageName }}
+    {{- range .Fields -}}
+        {{- if .IsRepeated }}
+            for _, {{.Name }} := range msg.{{ .PublicName }}{
+                elem := New{{ .GoKind }}FromPB({{.Name }})
+                if elem != nil{
+                    result.{{ .PublicName }} = append(result.{{ .PublicName }}, *elem)
+                }
+            } 
+        {{- else if .IsBasic  }}
+            result.{{ .PublicName }} = msg.{{ .PublicName }}
+        {{- else if .IsOneOf }} 
+            // TODO one of {{ .PublicName }}
+        {{- else if .IsMap }}
+            // TODO map {{ .PublicName }}
+        {{- else if .IsReserved }}
+            // TODO reserved {{ .PublicName }}
+        {{- else if isEnumField . }}
+            result.{{ .PublicName }} = New{{ .GoKind }}FromPB(&msg.{{ .PublicName }})
+        {{- else }}
+            result.{{ .PublicName }} = New{{ .GoKind }}FromPB(msg.{{ .PublicName }}) 
+        {{- end }}{{/* end if-else */}}
+    {{- end }}{{/* end range .Field */}}
+    return &result
+}
+
+// transformer *{{.Name}} to *pb.{{.Name}}
+func NewPBFrom{{ .Name | upperFirst }} (msg *{{.Name}}) *pb.{{.Name}} {
+    if msg == nil{
+        return nil
+    }
+    var result pb.{{ $messageName }}
+    {{- range .Fields -}}
+        {{- if .IsRepeated }}
+            for _, {{.Name}} := range msg.{{ .PublicName }}{
+                elem := NewPBFrom{{ .GoKind }}(&{{.Name }})
+                if elem != nil{
+                    result.{{ .PublicName }} = append(result.{{ .PublicName }}, elem)
+                }
+            } 
+        {{- else if .IsBasic }}
+            result.{{ .PublicName }} = msg.{{ .PublicName }} 
+        {{- else if .IsOneOf }} 
+            // TODO one of {{ .PublicName }}
+        {{- else if .IsMap }}
+            // TODO map {{ .PublicName }}
+        {{- else if .IsReserved }}
+            // TODO reserved {{ .PublicName }}
+        {{- else if isEnumField . }}
+            result.{{ .PublicName }} = New{{ .GoKind }}ToPB(msg.{{ .PublicName }})
+        {{- else }}
+            result.{{ .PublicName }} = NewPBFrom{{ .GoKind }}(msg.{{ .PublicName }}) 
+        {{- end }}{{/* end if-else */}}
+    {{- end }}{{/* end range .Field */}}
+    return &result
+}
+{{ end}}
+{{/* end range messages*/}}
+
+ 

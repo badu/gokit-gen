@@ -1,0 +1,78 @@
+{{/* functions signature */}}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "errors"
+    "context"
+    
+    "github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+)
+
+type Service interface {
+    {{- range $service := .Services }}
+        {{- range $method := $service.Methods}}
+            {{- if .NoStreaming }}
+                {{ template "funcSignature" . }}
+            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
+                // TODO : half duplex
+                //{{.Name}}(context.Context, *{{.Name}}Request) (chan interface{}, error)
+                {{ template "funcSignature" . }}// temporary
+            {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
+                // TODO : reverse half duplex
+                //{{.Name}}(context.Context, chan *{{.Name}}Request) (*{{.Name}}Response, error)
+                {{ template "funcSignature" . }}// temporary
+            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+                // TODO : full duplex
+                //{{.Name}}(context.Context, chan *{{.Name}}Request) (chan interface{}, error)
+                {{ template "funcSignature" . }}// temporary
+            {{- end}} {{/* streaming ifs*/}}
+        {{- end}} {{/* range Method */}}
+    {{- end }} {{/* range services */}}
+    Log() log.Logger
+}
+
+type serviceImpl struct{
+    log  log.Logger
+	repo    Repository
+}
+
+func NewService(log log.Logger, repo Repository) Service{
+    return &serviceImpl{log:log,repo:repo}
+}
+
+func (s *serviceImpl) Log() log.Logger {
+	return s.log
+}
+{{- range $service := .Services }}
+    {{- range $method := $service.Methods}}
+        {{- if and $method.NoStreaming}}
+            func (s *serviceImpl) {{- template "funcSignature" . -}}{
+                level.Error(s.log).Log("service", "not implemented")
+                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            }
+        {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
+            // TODO : half duplex for {{.Name}}
+            func (s *serviceImpl) {{- template "funcSignature" . -}}{
+                level.Error(s.log).Log("service", "not implemented")
+                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            }
+        {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
+            // TODO : reverse half duplex for {{.Name}}
+            func (s *serviceImpl) {{- template "funcSignature" . -}}{
+                level.Error(s.log).Log("service", "not implemented")
+                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            }
+        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+            // TODO : full duplex for {{.Name}}
+            func (s *serviceImpl) {{- template "funcSignature" . -}}{
+                level.Error(s.log).Log("service", "not implemented")
+                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            }
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+{{- end }}{{/* we have service */}}

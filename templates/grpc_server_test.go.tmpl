@@ -1,0 +1,136 @@
+{{/* functions signature */}}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{ define "returnSignature" }}{{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{lowerFirst .PublicName}}, {{- end }} err{{- end }}{{ end }}
+{{ define "requestSignature" }}{{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }}{{- end }}{{ end }}
+{{- if ne (len .Services) 0}}
+package {{ projectName }}_test
+
+import(
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"testing"
+	"time"
+	
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+	"github.com/go-kit/kit/transport"
+    "github.com/go-kit/kit/endpoint"
+	"github.com/stretchr/testify/assert"
+	"github.com/dgrijalva/jwt-go"
+	"google.golang.org/grpc"
+
+    pb "{{ go_package }}"
+	kitJWT "github.com/go-kit/kit/auth/jwt"
+    kitGRPC "github.com/go-kit/kit/transport/grpc"
+    . "{{ goPkg }}"
+)
+
+type MockedRepository struct{}
+
+{{ range .Services}}
+    {{- range .Methods }}
+    func (r *MockedRepository) {{- template "funcSignature" . -}}{
+        // TODO : implement me
+        return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+    }
+    {{ end }}
+{{- end }}
+
+const(
+    grpcHostAndPort = "localhost:8082"
+)
+
+func generateJWTMeta() string {
+	// TODO : customize 
+	return ""
+}
+
+func TestMain(m *testing.M) {
+	serverLogger := log.NewLogfmtLogger(os.Stderr)
+	serverLogger = log.With(serverLogger, "caller", log.Caller(7))
+	serverLogger = level.NewFilter(serverLogger, level.AllowDebug())
+	
+	grpcService     := NewService(serverLogger, &MockedRepository{})
+	//authMiddleware := MakeEnsureValidJWTMiddleware(serverLogger)
+	endpoints 		:= MakeEndpoints(grpcService, []endpoint.Middleware{})//authMiddleware
+	grpcServer      := grpc.NewServer()
+	
+	serverConn, err := net.Listen("tcp", grpcHostAndPort)
+	if err != nil {
+		panic(fmt.Sprintf("unable to listen: %+v", err))
+	}
+	defer grpcServer.GracefulStop()	
+	{{ if hasStreaming }}
+	options := []kitGRPC.ServerOption{
+		kitGRPC.ServerBefore(kitJWT.GRPCToContext()),
+		//kitGRPC.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, serverLogger)),
+		kitGRPC.ServerBefore(MakeAddStreamUUID(serverLogger)),
+	}
+	{{ else }}
+	options := []kitGRPC.ServerOption{
+		kitGRPC.ServerErrorHandler(transport.NewLogErrorHandler(serverLogger)),
+		kitGRPC.ServerBefore(kitJWT.GRPCToContext()),
+		//kitGRPC.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, serverLogger)),
+	}
+	{{ end }}
+	service, err := NewGRPCServer(endpoints, serverLogger, options...)
+	if err != nil {
+		level.Error(serverLogger).Log("error", err)
+	}
+
+	go func() {
+        {{- range $service := .Services }}{{ $serviceName := .Name | upperFirst }}
+		pb.Register{{ $serviceName }}Server(grpcServer, service)
+        {{- end }}
+		_ = grpcServer.Serve(serverConn)
+	}()
+	exitVal := m.Run()
+	os.Exit(exitVal)
+}
+
+{{- range $service := .Services }}
+    {{ $serviceName := .Name | upperFirst }}
+    {{- range $method := $service.Methods}} 
+        {{- if and $method.NoStreaming}}            
+        func TestGRPC{{.Name}}(t *testing.T){
+            logger := log.NewLogfmtLogger(os.Stderr)
+            logger = log.With(logger, "caller", log.Caller(7))
+            logger = level.NewFilter(logger, level.AllowDebug())
+
+            conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+            if err != nil {
+                t.Fatalf("unable to Dial: %+v", err)
+            }
+            
+            clientOptions := []kitGRPC.ClientOption{ kitGRPC.ClientBefore(kitJWT.ContextToGRPC()) }
+            client := NewClient(conn, logger, clientOptions...)
+            
+            ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+            // TODO : load the payloads
+            {{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
+            if err != nil {
+                t.Fatalf("unable to test: %+v", err)
+            }
+            // TODO : check response (write the actual test)         
+			{{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}  
+			t.Logf("{{lowerFirst .PublicName}} : %v", {{lowerFirst .PublicName}}) 
+			{{- end }}{{ end }}
+          
+        }    
+        {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
+            // TODO : half duplex for {{.Name}}
+            
+        {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
+            // TODO : reverse half duplex for {{.Name}}
+                  
+        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+            // TODO : full duplex for {{.Name}}
+               
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+{{- end }}{{/* we have service */}}

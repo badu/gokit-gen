@@ -1,0 +1,40 @@
+{{/* functions signature */}}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "errors"
+    "context"	
+    
+    "github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+)
+
+type Repository interface{
+    {{- range .Services}}
+        {{- range .Methods }}
+            {{ template "funcSignature" . }}
+        {{- end }}
+    {{- end }}
+}
+
+type repositoryImpl struct{
+    log  log.Logger
+    db   interface{} // TODO : use your own kind, e.g. *mongo.Client
+}
+
+func NewRepository(logger log.Logger, db interface{}) Repository{
+    return &repositoryImpl{log:logger,db:db}
+}
+
+{{ range .Services}}
+    {{- range .Methods }}
+    func (r *repositoryImpl) {{- template "funcSignature" . -}}{
+        level.Error(r.log).Log("repository", "not implemented")
+        return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+    }
+    {{ end }}
+{{- end }}
+
+{{- end }}{{/* we have service */}}

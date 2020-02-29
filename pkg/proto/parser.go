@@ -34,16 +34,20 @@ type Service struct {
 
 type Method struct {
 	Name              string
-	In                []Field
-	Out               []Field
+	In                Fields
+	Out               Fields
 	Options           []Option
 	IsServerStreaming bool
 	IsClientStreaming bool
 }
 
+func (m *Method) NoStreaming() bool {
+	return !m.IsServerStreaming && !m.IsClientStreaming
+}
+
 type Message struct {
 	Name     string
-	Fields   []Field
+	Fields   Fields
 	Options  []Option
 	Enums    []Enum
 	Messages []Message // nested messages
@@ -51,38 +55,48 @@ type Message struct {
 }
 
 type Enum struct {
-	Name     string
-	Options  []Option
-	Fields   []Field
-	IsNested bool
+	Name       string
+	ParentName string
+	Options    []Option
+	Fields     Fields
+	IsEmbedded bool
 }
 
-func (f *Enum) PublicName() string {
-	return strings.ToUpper(f.Name[:1]) + f.Name[1:]
+func (e *Enum) PublicName() string {
+	return e.ParentName + strings.ToUpper(e.Name[:1]) + e.Name[1:]
 }
 
 type Field struct {
-	Name       string
-	Kind       string
-	MapKind    KeyValue
-	Pos        string
-	Options    []Option
-	OneOf      []Field
-	IsRepeated bool
-	IsMap      bool
-	IsOneOf    bool
-	IsReserved bool
+	Name        string
+	Kind        string
+	MapKind     KeyValue
+	Pos         string
+	Options     []Option
+	OneOf       Fields
+	IsEnumField bool // belongs to enum fields
+	IsRepeated  bool
+	IsMap       bool
+	IsOneOf     bool
+	IsReserved  bool
+}
+
+type Fields []Field
+
+func (coll Fields) FirstPublicName() string {
+	if len(coll) >= 2 {
+		return coll[0].PublicName()
+	}
+	return ""
+}
+
+func (coll Fields) L() error {
+	log.Printf("%d fields", len(coll))
+	return nil
 }
 
 func (f *Field) IsBasic() bool {
 	switch f.Kind {
-	case "unsafe.Pointer", "bool", "byte",
-		"complex64", "complex128",
-		"error",
-		"float32", "float64", "float",
-		"int", "int8", "int16", "int32", "int64",
-		"rune", "string",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr":
+	case "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32", "sfixed64", "sint32", "sint64", "string", "uint32", "uint64":
 		return true
 	}
 	return false
@@ -162,7 +176,60 @@ func (f *Field) GoKind() string {
 	return f.Kind
 }
 
+func (f *Field) ZeroValue() string {
+	switch f.Kind {
+	case "bool":
+		return "false"
+	case "bytes":
+		return "[]byte{}"
+	case "double":
+		return "0.0"
+	case "fixed32":
+		return "0"
+	case "fixed64":
+		return "0"
+	case "float":
+		return "0.0"
+	case "int32":
+		return "0"
+	case "int64":
+		return "0"
+	case "map":
+		return "make(map[" + getKind(f.MapKind.Key) + "]" + getKind(f.MapKind.Value) + ")"
+	case "sfixed32":
+		return "0"
+	case "sfixed64":
+		return "0"
+	case "sint32":
+		return "0"
+	case "sint64":
+		return "0"
+	case "string":
+		return "\"\""
+	case "uint32":
+		return "0"
+	case "uint64":
+		return "0"
+	}
+	return "nil"
+}
+
 func (f *Field) PublicName() string {
+	if len(f.Name) == 0 {
+		return ""
+	}
+	if f.IsEnumField {
+		name := ""
+		if strings.Contains(f.Name, "_") {
+			// clean enum _
+			nameParts := strings.Split(f.Name, "_")
+			for _, part := range nameParts {
+				name += strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
+			}
+			return name
+		}
+		return strings.ToUpper(f.Name[:1]) + strings.ToLower(f.Name[1:])
+	}
 	return strings.ToUpper(f.Name[:1]) + f.Name[1:]
 }
 
@@ -220,9 +287,10 @@ func extractConstant(ctx parser.IConstantContext) string {
 		return ct.IntLit().GetText()
 	}
 	if ct.StrLit() != nil {
-		result, err := strconv.Unquote(ct.StrLit().GetText())
+		strLit := ct.StrLit().GetText()
+		result, err := strconv.Unquote(strLit)
 		if err != nil {
-			log.Printf("error unquoting : %v", err)
+			log.Printf("error unquoting %q : %v", strLit, err)
 		}
 		return result
 	}
@@ -323,8 +391,8 @@ func makeKeyValueOptions(ctx []parser.IKeyValueContext) []Option {
 	return result
 }
 
-func makeEnumFields(ctx []parser.IEnumFieldContext) []Field {
-	var result []Field
+func makeEnumFields(ctx []parser.IEnumFieldContext) Fields {
+	var result Fields
 	for _, enuFieldDecl := range ctx {
 		enuFieldCtx, ok := enuFieldDecl.(*parser.EnumFieldContext)
 		if !ok {
@@ -332,7 +400,7 @@ func makeEnumFields(ctx []parser.IEnumFieldContext) []Field {
 			continue
 		}
 
-		field := Field{Name: enuFieldCtx.Ident().GetText(), Kind: enuFieldCtx.IntLit().GetText()}
+		field := Field{Name: enuFieldCtx.Ident().GetText(), Kind: enuFieldCtx.IntLit().GetText(), IsEnumField: true}
 
 		options := makeKeyValueOptions(enuFieldCtx.AllKeyValue())
 		field.Options = append(field.Options, options...)
@@ -342,7 +410,7 @@ func makeEnumFields(ctx []parser.IEnumFieldContext) []Field {
 	return result
 }
 
-func makeEnums(ctx []parser.IEnumContext) []Enum {
+func makeEnums(ctx []parser.IEnumContext, parentName string) []Enum {
 	var result []Enum
 	for _, enuDecl := range ctx {
 		enumCtx, ok := enuDecl.(*parser.EnumContext)
@@ -365,14 +433,16 @@ func makeEnums(ctx []parser.IEnumContext) []Enum {
 
 		enuFields := makeEnumFields(declCtx.AllEnumField())
 		enum.Fields = append(enum.Fields, enuFields...)
+		enum.ParentName = parentName
+		enum.IsEmbedded = parentName != ""
 
 		result = append(result, enum)
 	}
 	return result
 }
 
-func makeFields(ctx []parser.IFieldContext) []Field {
-	var result []Field
+func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string) Fields {
+	var result Fields
 	for _, afCtx := range ctx {
 		fieldCtx, ok := afCtx.(*parser.FieldContext)
 		if !ok {
@@ -393,7 +463,15 @@ func makeFields(ctx []parser.IFieldContext) []Field {
 			continue
 		}
 
-		field := Field{Name: fieldCtx.Ident().GetText(), Kind: fieldCtx.FieldType().GetText(), Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil}
+		kind := fieldCtx.FieldType().GetText()
+		field := Field{Name: fieldCtx.Ident().GetText(), Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil}
+
+		// fix embed enums fields
+		if alterName, has := enumsMap[kind]; has {
+			field.Kind = alterName
+		} else {
+			field.Kind = kind
+		}
 
 		if fieldCtx.FieldOpts() != nil {
 			fieldOptsCtx, ok := fieldCtx.FieldOpts().(*parser.FieldOptsContext)
@@ -410,8 +488,8 @@ func makeFields(ctx []parser.IFieldContext) []Field {
 	return result
 }
 
-func makeMapFields(ctx []parser.IMapFieldContext) []Field {
-	var result []Field
+func makeMapFields(ctx []parser.IMapFieldContext) Fields {
+	var result Fields
 	for _, mapDecl := range ctx {
 		fieldCtx, ok := mapDecl.(*parser.MapFieldContext)
 		if !ok {
@@ -457,9 +535,9 @@ func makeMapFields(ctx []parser.IMapFieldContext) []Field {
 	return result
 }
 
-func makeOneOfFields(ctx []parser.IOneofContext) (string, []Field) {
+func makeOneOfFields(ctx []parser.IOneofContext) (string, Fields) {
 	var (
-		result    []Field
+		result    Fields
 		fieldName string
 	)
 	for _, ooDecl := range ctx {
@@ -555,11 +633,16 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 	msgOpts := makeOptions(declCtx.AllOption())
 	result.Options = append(result.Options, msgOpts...)
 
-	msgEnums := makeEnums(declCtx.AllEnum())
+	msgEnums := makeEnums(declCtx.AllEnum(), result.Name)
+	enumsMap := make(map[string]string)
+	for _, enum := range msgEnums {
+		enumsMap[enum.Name] = enum.ParentName + enum.Name
+	}
 	result.Enums = append(result.Enums, msgEnums...)
 	proto.Enums = append(proto.Enums, msgEnums...)
 
-	msgFields := makeFields(declCtx.AllField())
+	msgFields := makeFields(declCtx.AllField(), enumsMap)
+
 	result.Fields = append(result.Fields, msgFields...)
 
 	for _, nestedMsg := range declCtx.AllMessage() {
@@ -585,8 +668,8 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 	return result
 }
 
-func makeNameAndKinds(idents []antlr.TerminalNode) []Field {
-	var result []Field
+func makeNameAndKinds(idents []antlr.TerminalNode) Fields {
+	var result Fields
 	for _, id := range idents {
 		result = append(result, Field{Kind: id.GetText()})
 	}
@@ -651,7 +734,7 @@ func (s *ProtoListener) ExitProto(ctx *parser.ProtoContext) {
 	protoOpts := makeOptions(ctx.AllOption())
 	s.Proto.Options = append(s.Proto.Options, protoOpts...)
 
-	enums := makeEnums(ctx.AllEnum())
+	enums := makeEnums(ctx.AllEnum(), "")
 	s.Proto.Enums = append(s.Proto.Enums, enums...)
 
 	for _, msgDecl := range ctx.AllMessage() {
@@ -676,7 +759,8 @@ func (s *ProtoListener) ExitProto(ctx *parser.ProtoContext) {
 		getIdent(&importStr, impCtx.StrLit())
 		unquotedImport, err := strconv.Unquote(importStr)
 		if err != nil {
-			log.Printf("error unquoting : %v", err)
+			s.Proto.Imports = append(s.Proto.Imports, importStr)
+			log.Printf("error unquoting %q : %v", importStr, err)
 			continue
 		}
 		s.Proto.Imports = append(s.Proto.Imports, unquotedImport)

@@ -1,0 +1,126 @@
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{ define "requestSignature" }}{{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }}{{- end }}{{ end }}
+{{ define "responseSignature" }}{{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }}{{- end }}{{ end }}
+{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "context"
+	"fmt"
+	
+    "google.golang.org/grpc"
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/log/level"
+    "github.com/go-kit/kit/endpoint"
+
+    pb "{{ go_package }}"
+    kitGRPC "github.com/go-kit/kit/transport/grpc"
+)
+
+type grpcClient struct{
+	log log.Logger
+    {{- range $service := .Services }}
+        {{- range $method := $service.Methods}}
+            {{- if .NoStreaming }}
+                {{.Name}}Endpoint endpoint.Endpoint
+            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
+                {{.Name}}Endpoint endpoint.Endpoint // TODO : half duplex
+            {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
+                {{.Name}}Endpoint endpoint.Endpoint // TODO : reverse half duplex
+            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+                {{.Name}}Endpoint endpoint.Endpoint  // TODO : full duplex
+            {{- end}} {{/* streaming ifs*/}}
+        {{- end}} {{/* range Method */}}
+    {{- end }} {{/* range services */}}
+}
+
+func (c *grpcClient) Log() log.Logger {
+	return c.log
+}
+
+func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.ClientOption) Service {
+	return &grpcClient{
+		log:logger, {{- range $service := .Services }}
+            {{ $serviceName := .Name }}
+            {{ range $method := $service.Methods}}
+            {{- if and $method.NoStreaming}}	
+            {{.Name }}Endpoint : kitGRPC.NewClient(
+						conn,
+						"{{ pb_package }}.{{ $serviceName }}Service",
+						"{{.Name}}",
+						encode{{.Name}}GRPCRequest(logger),
+						decode{{.Name}}GRPCResponse(logger),
+						&pb.{{.Name}}Response{},
+						options...,
+					).Endpoint(),
+                    {{- else }}
+                    {{.Name }}Endpoint : kitGRPC.NewClient(
+						conn,
+						"{{ pb_package }}.{{ $serviceName }}Service",
+						"{{.Name}}",
+						encode{{.Name}}GRPCRequest(logger),
+						decode{{.Name}}GRPCResponse(logger),
+						&pb.{{.Name}}Response{},
+						options...,
+					).Endpoint(),// TODO - streaming 
+                    {{- end }}{{ end }} {{/* range Method */}}
+        {{- end }} {{/* range services */}}
+	}
+}
+
+{{- range $service := .Services }}
+    {{ $serviceName := .Name | upperFirst }}
+    {{- range $method := $service.Methods}}
+            func encode{{.Name}}GRPCRequest(logger log.Logger) func(context.Context, interface{})(interface{},error){
+                return func(ctx context.Context, req interface{}) (interface{}, error) {
+                    pbReq, ok := req.(*pb.{{.Name}}Request)
+                    if !ok{
+                        err := fmt.Errorf("expecting *{{.Name}}Request received %T", req)
+                        level.Error(logger).Log("decode{{.Name}}GRPCRequest",err)
+                        return nil, err
+                    }
+                    // TODO : validate protobuf
+                    return New{{.Name}}RequestFromPB(pbReq), nil
+                }
+            }
+
+            func decode{{.Name}}GRPCResponse(logger log.Logger) func(context.Context, interface{})(interface{},error){
+                return func(ctx context.Context, resp interface{}) (interface{}, error) {
+                    domResp, ok := resp.(*{{.Name}}Response)
+                    if !ok{
+                        err :=  fmt.Errorf("expecting *{{.Name}}Response received %T", resp)
+                        level.Error(logger).Log("encode{{.Name}}GRPCRequest",err)
+                        return nil, err
+                    }				
+                    return NewPBFrom{{.Name}}Response(domResp), nil
+                }
+            }
+
+            func (c *grpcClient) {{ template "funcSignature" . }} {
+                resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .Name }}Request{ {{ template "requestSignature" . }} })
+                if err != nil {
+                    return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} err
+                }
+                domResp, ok := resp.(*{{.Name}}Response)
+                if !ok{
+                    err := fmt.Errorf("expecting *{{.Name}}Response received %T", resp)
+                    return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} err 
+                } 
+                return {{ template "responseSignature" . }} nil
+            }
+        {{ if and $method.NoStreaming}}            
+            
+        {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
+            // TODO : half duplex for {{.Name}}
+            
+        {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
+            // TODO : reverse half duplex for {{.Name}}
+                  
+        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+            // TODO : full duplex for {{.Name}}
+               
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+{{- end }}{{/* we have service */}}
