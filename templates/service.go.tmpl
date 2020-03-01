@@ -1,5 +1,7 @@
 {{/* functions signature */}}
-{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
+{{ define "repoSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}res{{.PublicName}},{{- end }} err:= s.repo.{{ .Name }}(ctx {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}}{{- else }}{{lowerFirst .PublicName}}{{- end }}{{- end }}){{ end }}
+{{ define "serviceReturn" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}res{{.PublicName}},{{- end }}nil{{ end }}
 {{- if ne (len .Services) 0}}
 package {{ projectName }}
 
@@ -9,6 +11,7 @@ import(
     
     "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+    {{ if hasStreaming }}pb "{{ go_package }}"{{end}}
 )
 
 type Service interface {
@@ -16,18 +19,12 @@ type Service interface {
         {{- range $method := $service.Methods}}
             {{- if .NoStreaming }}
                 {{ template "funcSignature" . }}
-            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
-                // TODO : half duplex
-                //{{.Name}}(context.Context, *{{.Name}}Request) (chan interface{}, error)
-                {{ template "funcSignature" . }}// temporary
+            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}                
+                {{.Name}}(req *pb.{{.InKind}}, stream pb.{{$service.Name}}_{{.Name}}Server) error // half duplex (client request, server streams)
             {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
-                // TODO : reverse half duplex
-                //{{.Name}}(context.Context, chan *{{.Name}}Request) (*{{.Name}}Response, error)
-                {{ template "funcSignature" . }}// temporary
+                {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error // reverse half duplex (client streams, server responds)
             {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
-                // TODO : full duplex
-                //{{.Name}}(context.Context, chan *{{.Name}}Request) (chan interface{}, error)
-                {{ template "funcSignature" . }}// temporary
+                {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error // full duplex (both client and server streams)
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
     {{- end }} {{/* range services */}}
@@ -37,6 +34,13 @@ type Service interface {
 type serviceImpl struct{
     log  log.Logger
 	repo    Repository
+    {{- range $service := .Services }}
+        {{- range $method := $service.Methods}}
+            {{- if .IsServerStreaming }}
+                broadcast{{.OutKind}} chan {{.OutKind}} // channel to stream to clients
+            {{- end }}
+        {{- end }}
+    {{- end }}
 }
 
 func NewService(log log.Logger, repo Repository) Service{
@@ -50,26 +54,117 @@ func (s *serviceImpl) Log() log.Logger {
     {{- range $method := $service.Methods}}
         {{- if and $method.NoStreaming}}
             func (s *serviceImpl) {{- template "funcSignature" . -}}{
-                level.Error(s.log).Log("service", "not implemented")
-                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+                {{ template "repoSignature" . }}
+                if err!=nil{
+                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
+                }
+                return {{ template "serviceReturn" . }}
             }
         {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
-            // TODO : half duplex for {{.Name}}
-            func (s *serviceImpl) {{- template "funcSignature" . -}}{
-                level.Error(s.log).Log("service", "not implemented")
-                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            // half duplex for {{.Name}}
+            func (s *serviceImpl) {{.Name}}(pbReq *pb.{{.InKind}}, stream pb.{{$service.Name}}_{{.Name}}Server) error{
+                waitc := make(chan struct{})
+                // server sending loop. exit conditions : client closes or sending error
+                var sendErr error
+                go func(ctx context.Context, waitChannel chan struct{}){
+                for {
+                    select {
+                        case message := <-s.broadcast{{.OutKind}}:
+                            level.Debug(s.log).Log("{{.Name}}Service", "Sending payload")
+                            payload:=NewPBFrom{{.OutKind}}(&message)
+                            // send a message to the client
+                            if sendErr = stream.Send(payload); sendErr != nil {
+                                close(waitChannel)
+                                return
+                            }
+                        case <-ctx.Done():
+                            level.Debug(s.log).Log("{{.Name}}Service", "Context done (client closed)")
+                            close(waitChannel)
+                            return
+                    }
+                }
+                }(stream.Context(), waitc)
+                // send response to client : POC for using broadcast channel
+                req := New{{.InKind}}FromPB(pbReq)
+                {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}res{{.PublicName}},{{- end }} err:= s.repo.{{ .Name }}(stream.Context() {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},req.{{.PublicName}}{{- end }})
+                if err!=nil{
+                    return err    
+                }
+                resp := {{.OutKind}}{ {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.PublicName}} : res{{.PublicName}},{{- end }} }
+                s.broadcast{{.OutKind}} <- resp
+                // wait until client has closed or we're having a sending error                
+                <-waitc                
+                return sendErr
             }
         {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
-            // TODO : reverse half duplex for {{.Name}}
-            func (s *serviceImpl) {{- template "funcSignature" . -}}{
-                level.Error(s.log).Log("service", "not implemented")
-                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            // reverse half duplex for {{.Name}}
+            func (s *serviceImpl) {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error{
+                // client receive loop : blocks until client closes or we have an error other than sending
+                for {
+                    pbReq, err := stream.Recv()
+                    if err == io.EOF {
+                        level.Debug(s.log).Log("{{.Name}}Service", "client closed")
+                        return nil // no error, client just closed
+                    }
+                    if err != nil {
+                        return err // receive error
+                    }
+                    
+                    req := New{{.InKind}}FromPB(pbReq)
+                    {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}_,{{- end }} err = s.repo.{{ .Name }}(stream.Context() {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},req.{{.PublicName}}{{- end }})
+                    if err!=nil{
+                        return err    
+                    }
+                }
+                
+                return nil
             }
         {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
-            // TODO : full duplex for {{.Name}}
-            func (s *serviceImpl) {{- template "funcSignature" . -}}{
-                level.Error(s.log).Log("service", "not implemented")
-                return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+            // full duplex for {{.Name}}
+            func (s *serviceImpl) {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error{       
+                 // server sending loop. exit conditions : client closes or sending error
+                var sendErr error
+                go func(ctx context.Context){
+                for {
+                    select {
+                        case message := <-s.broadcast{{.OutKind}}:
+                            level.Debug(s.log).Log("{{.Name}}Service", "Sending payload")
+                            payload:=NewPBFrom{{.OutKind}}(&message)
+                            // send a message to the client
+                            if sendErr = stream.Send(payload); sendErr != nil {
+                                return
+                            }
+                        case <-ctx.Done():
+                            level.Debug(s.log).Log("{{.Name}}Service", "Context done (client closed)")
+                            return
+                    }
+                }
+                }(stream.Context())
+                // client receive loop : blocks until client closes or we have an error other than sending
+                for {
+                    pbReq, err := stream.Recv()
+                    if err == io.EOF {
+                        level.Debug(s.log).Log("{{.Name}}Service", "client closed")
+                        return nil // no error, client just closed
+                    }
+                    if err != nil {
+                        return err // receive error
+                    }
+                    // checking if sending error has happen previously
+                    if sendErr!= nil{
+                        return sendErr
+                    }
+
+                    req := New{{.InKind}}FromPB(pbReq)
+                    {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}res{{.PublicName}},{{- end }} err:= s.repo.{{ .Name }}(stream.Context() {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},req.{{.PublicName}}{{- end }})
+                    if err!=nil{
+                        return err    
+                    }
+                    resp := {{.OutKind}}{ {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.PublicName}} : res{{.PublicName}},{{- end }} }
+                    s.broadcast{{.OutKind}} <- resp
+                }  
+                // if we had a previous sending error, we're returning it               
+                return sendErr
             }
         {{- end }} {{/* streaming ifs*/}}
     {{ end }} {{/* range Method */}}

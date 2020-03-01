@@ -339,6 +339,9 @@ out:
 			break
 		}
 	}
+	if goPackage == "" {
+		return errors.New("undefined go package")
+	}
 
 	var funcMap = template.FuncMap{
 		"string": func(i interface {
@@ -444,7 +447,7 @@ out:
 			if len(content) > 0 {
 				log.Printf("partial result : %s", string(content))
 			}
-			//continue // TODO : allow continue
+			//continue
 		}
 		if !debug {
 			if len(content) == 0 {

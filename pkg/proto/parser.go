@@ -34,8 +34,8 @@ type Service struct {
 
 type Method struct {
 	Name              string
-	In                Fields
-	Out               Fields
+	InKind            string
+	OutKind           string
 	Options           []Option
 	IsServerStreaming bool
 	IsClientStreaming bool
@@ -218,19 +218,16 @@ func (f *Field) PublicName() string {
 	if len(f.Name) == 0 {
 		return ""
 	}
-	if f.IsEnumField {
-		name := ""
-		if strings.Contains(f.Name, "_") {
-			// clean enum _
-			nameParts := strings.Split(f.Name, "_")
-			for _, part := range nameParts {
-				name += strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
-			}
-			return name
+	name := ""
+	if strings.Contains(f.Name, "_") {
+		// clean enum _
+		nameParts := strings.Split(f.Name, "_")
+		for _, part := range nameParts {
+			name += strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
 		}
-		return strings.ToUpper(f.Name[:1]) + strings.ToLower(f.Name[1:])
+		return name
 	}
-	return strings.ToUpper(f.Name[:1]) + f.Name[1:]
+	return strings.ToUpper(f.Name[:1]) + strings.ToLower(f.Name[1:])
 }
 
 func (f *Field) IsTimestamp() bool {
@@ -716,14 +713,22 @@ func makeMethods(ctx []parser.IRpcContext) []Method {
 			log.Print("expecting *RpcParamsContext")
 			continue
 		}
-		rpc.In = append(rpc.In, makeNameAndKinds(rpcParams.AllIdent())...)
+		if len(rpcParams.AllIdent()) != 1 {
+			log.Printf("error : found %d params in rpc", len(rpcParams.AllIdent()))
+			continue
+		}
+		rpc.InKind = rpcParams.AllIdent()[0].GetText()
 
 		rpcRets, ok := rpcCtx.RpcReturns().(*parser.RpcReturnsContext)
 		if !ok {
 			log.Print("expecting *RpcReturnsContext")
 			continue
 		}
-		rpc.Out = append(rpc.Out, makeNameAndKinds(rpcRets.AllIdent())...)
+		if len(rpcRets.AllIdent()) != 1 {
+			log.Printf("error : found %d returns in rpc", len(rpcRets.AllIdent()))
+			continue
+		}
+		rpc.OutKind = rpcRets.AllIdent()[0].GetText()
 
 		result = append(result, rpc)
 	}

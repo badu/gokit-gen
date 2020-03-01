@@ -6,15 +6,17 @@ import (
 	"testing"
 )
 
-/**
-
-args := []string{"", "/home/badu/go.workspace/go-kit-gen-pub/src/github.com/badu/gokit-gen/pkg/proto/testdata/test.proto", "./../../templates", "bitbucket.org/appetize_backend/protorepo/stock/bitbucket.org/appetize_backend/stock_transaction", "/home/badu/go.workspace/go-kit-gen-pub/src/github.com/badu/gokit-gen/pkg/proto/testdata/"}
-*/
 func Test(t *testing.T) {
+	const (
+		templatesDir = "./../../templates"
+		deployTo     = "/home/badu/go.workspace/go-kit-gen-pub/src/github.com/badu/gokit-gen/example/route_guide/gen/"
+		protoFile    = "/home/badu/go.workspace/go-kit-gen-pub/src/github.com/badu/gokit-gen/example/route_guide/routeguide/route_guide.proto"
+		packageName  = "github.com/badu/gokit-gen/example/route_guide/gen"
+	)
 	log.SetFlags(0)
 	log.SetPrefix("gokit-gen: ")
 
-	args := []string{"", "/home/badu/appetize/protorepo/src/bitbucket.org/appetize_backend/protorepo/stock/stock_transaction.proto", "./../../templates", "bitbucket.org/appetize_backend/protorepo/stock/bitbucket.org/appetize_backend/stock_transaction", "/home/badu/appetize/protorepo/src/bitbucket.org/appetize_backend/protorepo/stock/bitbucket.org/appetize_backend/stock_transaction/"}
+	args := []string{"", protoFile, templatesDir, packageName, deployTo}
 
 	var stdout bytes.Buffer
 

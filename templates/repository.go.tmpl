@@ -1,5 +1,5 @@
 {{/* functions signature */}}
-{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
 {{- if ne (len .Services) 0}}
 package {{ projectName }}
 
@@ -10,7 +10,23 @@ import(
     "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 )
+/**
+type MysqlConfig struct {
+	Host              string `env:"DB_READ_HOST" envDefault:"local-{{projectName}}"`
+	Port              string `env:"DB_READ_PORT" envDefault:"3306"`
+	ConnectionTimeout int    `env:"DB_READ_CONNECTION_TIMEOUT" envDefault:"5"`
+	MaxConnLifetime   int    `env:"DB_READ_MAX_CONN_LIFETIME" envDefault:"0"`
+	MaxIdleConns      int    `env:"DB_READ_MAX_IDLE_CONNS" envDefault:"2"`
+	MaxOpenConns      int    `env:"DB_READ_MAX_OPEN_CONNS" envDefault:"0"`
+	ReadTimeout       int    `env:"DB_READ_READ_TIMEOUT" envDefault:"360"`
+	Username          string `env:"DB_READ_USERNAME" envDefault:"root"`
+	Password          string `env:"DB_READ_PASSWORD" envDefault:"foobar"`
+	DatabaseName      string `env:"DB_READ_DATABASE" envDefault:"{{projectName}}"`
+}
+**/
+/**
 
+**/
 type Repository interface{
     {{- range .Services}}
         {{- range .Methods }}
@@ -32,7 +48,7 @@ func NewRepository(logger log.Logger, db interface{}) Repository{
     {{- range .Methods }}
     func (r *repositoryImpl) {{- template "funcSignature" . -}}{
         level.Error(r.log).Log("repository", "not implemented")
-        return {{ range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }}{{- end }} errors.New("not implemented")
+        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} errors.New("not implemented")
     }
     {{ end }}
 {{- end }}

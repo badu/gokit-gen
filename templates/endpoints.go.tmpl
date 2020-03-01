@@ -1,7 +1,7 @@
 {{/* functions signature */}}
-{{ define "funcSignature" }}{{ .Name }}(ctx {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},domReq.{{ .PublicName }} {{- end }}{{- end }}){{ end }}
-{{ define "returnSignature" }}{{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{lowerFirst .PublicName}}, {{- end }} err{{- end }}{{ end }}
-{{ define "responseSignature" }}{{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }}{{- end }}{{ end }}
+{{ define "funcSignature" }}{{ .Name }}(ctx {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},domReq.{{ .PublicName }} {{- end }}){{ end }}
+{{ define "returnSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{lowerFirst .PublicName}}, {{- end }} err{{- end }}
+{{ define "responseSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }}{{- end }}
 {{- if ne (len .Services) 0}}
 package {{ projectName }}
 
@@ -11,6 +11,8 @@ import(
 	
 	"github.com/go-kit/kit/endpoint"
     "github.com/go-kit/kit/log/level"
+
+    pb "{{ go_package }}"
 )
 
 type Endpoints struct {
@@ -18,15 +20,12 @@ type Endpoints struct {
         {{- range $method := $service.Methods}}
             {{- if .NoStreaming }}
                 {{.Name}}Endpoint endpoint.Endpoint
-            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
-                // TODO : half duplex
-                {{.Name}}Endpoint endpoint.Endpoint
-            {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
-                // TODO : reverse half duplex
-                {{.Name}}Endpoint endpoint.Endpoint
-            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
-                // TODO : full duplex
-                {{.Name}}Endpoint endpoint.Endpoint
+            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}                
+                {{.Name}}Endpoint endpoint.Endpoint // half duplex
+            {{- else if and (not .IsServerStreaming) .IsClientStreaming }}                
+                {{.Name}}Endpoint endpoint.Endpoint // reverse half duplex
+            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}                
+                {{.Name}}Endpoint endpoint.Endpoint //  full duplex
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
     {{- end }} {{/* range services */}}
@@ -53,7 +52,7 @@ func MakeEndpoints(svc Service, mwares []endpoint.Middleware) Endpoints {
         {{- if and $method.NoStreaming}}
            func make{{.Name}}Endpoint(svc Service) endpoint.Endpoint {
 			return func(ctx context.Context, req interface{}) (interface{}, error) {
-				domReq, ok := req.(*{{.Name}}Request)
+				domReq, ok := req.(*{{.InKind}})
 				if !ok{
 					err := fmt.Errorf("expecting *{{.Name}}Request received %T", req)
 					level.Error(svc.Log()).Log("endpoint_error",err)
@@ -63,27 +62,57 @@ func MakeEndpoints(svc Service, mwares []endpoint.Middleware) Endpoints {
 				if err != nil {
 					return nil, err
 				}
-				return &{{ .Name }}Response{ {{- template "responseSignature" . }} }, nil
+				return &{{ .OutKind }}{ {{- template "responseSignature" . }} }, nil
 			}
 		}
         {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
-            // TODO : half duplex
+            // half duplex
             func make{{.Name}}Endpoint(svc Service) endpoint.Endpoint {
                 return func(ctx context.Context, req interface{}) (interface{}, error) {
+                    reqAndStream, ok := req.(*RequestAndStream{{.Name}})
+                    if !ok{
+                        err := fmt.Errorf("expecting *RequestAndStream{{.Name}} received %T", req)
+                        level.Error(svc.Log()).Log("endpoint_error",err)
+                        return nil, err
+                    }
+                    err:= svc.{{.Name}}(reqAndStream.Request, reqAndStream.Stream)
+                    if err!=nil{
+                        return nil,err
+                    }
                     return nil,nil
                 }
             }           
         {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
-            // TODO : reverse half duplex
+            // reverse half duplex
             func make{{.Name}}Endpoint(svc Service) endpoint.Endpoint {
                 return func(ctx context.Context, req interface{}) (interface{}, error) {
+                    stream, ok := req.(pb.{{ $service.Name }}_{{.Name}}Server)
+                    if !ok{
+                        err := fmt.Errorf("expecting pb.{{ $service.Name }}_{{.Name}}Server received %T", req)
+                        level.Error(svc.Log()).Log("endpoint_error",err)
+                        return nil, err
+                    }
+                    err:= svc.{{.Name}}(stream)
+                    if err!=nil{
+                        return nil,err
+                    }
                     return nil,nil
                 }
             }            
         {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
-            // TODO : full duplex
+            // full duplex
             func make{{.Name}}Endpoint(svc Service) endpoint.Endpoint {
                 return func(ctx context.Context, req interface{}) (interface{}, error) {
+                    stream, ok := req.(pb.{{ $service.Name }}_{{.Name}}Server)
+                    if !ok{
+                        err := fmt.Errorf("expecting pb.{{ $service.Name }}_{{.Name}}Server received %T", req)
+                        level.Error(svc.Log()).Log("endpoint_error",err)
+                        return nil, err
+                    }
+                    err:= svc.{{.Name}}(stream)
+                    if err!=nil{
+                        return nil,err
+                    }
                     return nil,nil
                 }
             }            
