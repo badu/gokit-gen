@@ -19,11 +19,13 @@ type Service interface {
         {{- range $method := $service.Methods}}
             {{- if .NoStreaming }}
                 {{ template "funcSignature" . }}
-            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}                
+            {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
+                Broadcast{{.Name}}() chan {{.OutKind}}                
                 {{.Name}}(req *pb.{{.InKind}}, stream pb.{{$service.Name}}_{{.Name}}Server) error // half duplex (client request, server streams)
             {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
                 {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error // reverse half duplex (client streams, server responds)
             {{- else if and .IsServerStreaming .IsClientStreaming }}
+                Broadcast{{.Name}}() chan {{.OutKind}}
                 {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error // full duplex (both client and server streams)
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
@@ -37,14 +39,14 @@ type serviceImpl struct{
     {{- range $service := .Services }}
         {{- range $method := $service.Methods}}
             {{- if .IsServerStreaming }}
-                broadcast{{.OutKind}} chan {{.OutKind}} // channel to stream to clients
+                broadcast{{.Name}} chan {{.OutKind}} // channel to stream to clients
             {{- end }}
         {{- end }}
     {{- end }}
 }
 
 func NewService(log log.Logger, repo Repository) Service{
-    return &serviceImpl{log:log,repo:repo}
+    return &serviceImpl{ log:log, repo:repo, {{- range .Services }}{{- range .Methods}}{{- if .IsServerStreaming }} broadcast{{.Name}}: make(chan {{.OutKind}}),{{- end }}{{- end }}{{- end }} }
 }
 
 func (s *serviceImpl) Log() log.Logger {
@@ -54,9 +56,9 @@ func (s *serviceImpl) Log() log.Logger {
 {{- range $service := .Services }}
     {{- range $method := $service.Methods}}
         {{- if .IsServerStreaming }}
-            // getter for Broadcast{{.OutKind}} chan {{.OutKind}}
-            func (s *serviceImpl) Broadcast{{.OutKind}}() chan {{.OutKind}}{
-                return s.broadcast{{.OutKind}}
+            // getter for broadcast{{.Name}} chan {{.OutKind}}
+            func (s *serviceImpl) Broadcast{{.Name}}() chan {{.OutKind}}{
+                return s.broadcast{{.Name}}
             }
         {{- end }}
     {{- end }}
@@ -79,20 +81,21 @@ func (s *serviceImpl) Log() log.Logger {
                 // server sending loop. exit conditions : client closes or sending error
                 var sendErr error
                 go func(ctx context.Context, waitChannel chan struct{}){
-                for {
-                    select {
-                        case message := <-s.broadcast{{.OutKind}}:
-                            level.Debug(s.log).Log("{{.Name}}Service", "Sending payload")
-                            payload:=NewPBFrom{{.OutKind}}(&message)
-                            // send a message to the client
-                            if sendErr = stream.Send(payload); sendErr != nil {
+                    for {
+                        select {
+                            case <-ctx.Done():
+                                level.Debug(s.log).Log("{{.Name}}Service", "Context done (client closed)")
                                 close(waitChannel)
                                 return
-                            }
-                        case <-ctx.Done():
-                            level.Debug(s.log).Log("{{.Name}}Service", "Context done (client closed)")
-                            close(waitChannel)
-                            return
+                            case message := <-s.broadcast{{.Name}}:
+                                level.Debug(s.log).Log("{{.Name}}Service", "Sending payload")
+                                payload:=NewPBFrom{{.OutKind}}(&message)
+                                // send a message to the client
+                                if sendErr = stream.Send(payload); sendErr != nil {
+                                    level.Error(s.log).Log("send_error", sendErr)
+                                    close(waitChannel)
+                                    return
+                        }                        
                     }
                 }
                 }(stream.Context(), waitc)
@@ -103,7 +106,7 @@ func (s *serviceImpl) Log() log.Logger {
                     return err    
                 }
                 resp := {{.OutKind}}{ {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.PublicName}} : res{{.PublicName}},{{- end }} }
-                s.broadcast{{.OutKind}} <- resp
+                s.broadcast{{.Name}} <- resp
                 // wait until client has closed or we're having a sending error                
                 <-waitc                
                 return sendErr
@@ -116,13 +119,22 @@ func (s *serviceImpl) Log() log.Logger {
                     pbReq, err := stream.Recv()
                     if err == io.EOF {
                         level.Debug(s.log).Log("{{.Name}}Service", "client closed")
-                        return nil // no error, client just closed
+                        // TODO : make payload to be returned
+                        sendErr := stream.SendAndClose(&pb.{{.OutKind}} { 
+                            {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }} {{.PublicName}}:{{.ZeroValue}},{{- end }}
+                        }) 
+                        if sendErr != nil{
+                            level.Error(s.log).Log("send_error", sendErr)
+                        }
+                        return nil// no error, client just closed
                     }
                     if err != nil {
+                        level.Error(s.log).Log("receive_error", err)
                         return err // receive error
                     }
                     
                     req := New{{.InKind}}FromPB(pbReq)
+                    // store in repository
                     {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}_,{{- end }} err = s.repo.{{ .Name }}(stream.Context() {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},req.{{.PublicName}}{{- end }})
                     if err!=nil{
                         return err    
@@ -139,16 +151,17 @@ func (s *serviceImpl) Log() log.Logger {
                 go func(ctx context.Context){
                 for {
                     select {
-                        case message := <-s.broadcast{{.OutKind}}:
+                        case <-ctx.Done():
+                            level.Debug(s.log).Log("{{.Name}}Service", "Context done (client closed)")
+                            return
+                        case message := <-s.broadcast{{.Name}}:
                             level.Debug(s.log).Log("{{.Name}}Service", "Sending payload")
                             payload:=NewPBFrom{{.OutKind}}(&message)
                             // send a message to the client
                             if sendErr = stream.Send(payload); sendErr != nil {
+                                level.Error(s.log).Log("send_error", sendErr)
                                 return
-                            }
-                        case <-ctx.Done():
-                            level.Debug(s.log).Log("{{.Name}}Service", "Context done (client closed)")
-                            return
+                            }                        
                     }
                 }
                 }(stream.Context())
@@ -160,6 +173,7 @@ func (s *serviceImpl) Log() log.Logger {
                         return nil // no error, client just closed
                     }
                     if err != nil {
+                        level.Error(s.log).Log("receive_error", err)
                         return err // receive error
                     }
                     // checking if sending error has happen previously
@@ -173,7 +187,7 @@ func (s *serviceImpl) Log() log.Logger {
                         return err    
                     }
                     resp := {{.OutKind}}{ {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.PublicName}} : res{{.PublicName}},{{- end }} }
-                    s.broadcast{{.OutKind}} <- resp
+                    s.broadcast{{.Name}} <- resp
                 }  
                 // if we had a previous sending error, we're returning it               
                 return sendErr

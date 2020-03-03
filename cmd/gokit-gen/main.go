@@ -340,6 +340,9 @@ out:
 			break
 		}
 	}
+	if len(result.Services) > 1 {
+		return fmt.Errorf("one service at a time please. found %d services", len(result.Services))
+	}
 
 	if goPackage == "" {
 		return errors.New("undefined go package")

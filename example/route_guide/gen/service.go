@@ -11,35 +11,37 @@ import (
 
 type Service interface {
 	GetFeature(ctx context.Context, latitude int32, longitude int32) (string, *Point, error)
+	BroadcastHalfDuplex() chan Feature
 	HalfDuplex(req *pb.Rectangle, stream pb.RouteGuide_HalfDuplexServer) error // half duplex (client request, server streams)
 	ReverseHalfDuplex(stream pb.RouteGuide_ReverseHalfDuplexServer) error      // reverse half duplex (client streams, server responds)
-	FullDuplex(stream pb.RouteGuide_FullDuplexServer) error                    // full duplex (both client and server streams)
+	BroadcastFullDuplex() chan RouteNote
+	FullDuplex(stream pb.RouteGuide_FullDuplexServer) error // full duplex (both client and server streams)
 	Log() log.Logger
 }
 
 type serviceImpl struct {
-	log                log.Logger
-	repo               Repository
-	broadcastFeature   chan Feature   // channel to stream to clients
-	broadcastRouteNote chan RouteNote // channel to stream to clients
+	log                 log.Logger
+	repo                Repository
+	broadcastHalfDuplex chan Feature   // channel to stream to clients
+	broadcastFullDuplex chan RouteNote // channel to stream to clients
 }
 
 func NewService(log log.Logger, repo Repository) Service {
-	return &serviceImpl{log: log, repo: repo}
+	return &serviceImpl{log: log, repo: repo, broadcastHalfDuplex: make(chan Feature), broadcastFullDuplex: make(chan RouteNote)}
 }
 
 func (s *serviceImpl) Log() log.Logger {
 	return s.log
 }
 
-// getter for BroadcastFeature chan Feature
-func (s *serviceImpl) BroadcastFeature() chan Feature {
-	return s.broadcastFeature
+// getter for broadcastHalfDuplex chan Feature
+func (s *serviceImpl) BroadcastHalfDuplex() chan Feature {
+	return s.broadcastHalfDuplex
 }
 
-// getter for BroadcastRouteNote chan RouteNote
-func (s *serviceImpl) BroadcastRouteNote() chan RouteNote {
-	return s.broadcastRouteNote
+// getter for broadcastFullDuplex chan RouteNote
+func (s *serviceImpl) BroadcastFullDuplex() chan RouteNote {
+	return s.broadcastFullDuplex
 }
 
 func (s *serviceImpl) GetFeature(ctx context.Context, latitude int32, longitude int32) (string, *Point, error) {
@@ -58,18 +60,19 @@ func (s *serviceImpl) HalfDuplex(pbReq *pb.Rectangle, stream pb.RouteGuide_HalfD
 	go func(ctx context.Context, waitChannel chan struct{}) {
 		for {
 			select {
-			case message := <-s.broadcastFeature:
-				level.Debug(s.log).Log("HalfDuplexService", "Sending payload")
-				payload := NewPBFromFeature(&message)
-				// send a message to the client
-				if sendErr = stream.Send(payload); sendErr != nil {
-					close(waitChannel)
-					return
-				}
 			case <-ctx.Done():
 				level.Debug(s.log).Log("HalfDuplexService", "Context done (client closed)")
 				close(waitChannel)
 				return
+			case message := <-s.broadcastHalfDuplex:
+				level.Debug(s.log).Log("HalfDuplexService", "Sending payload")
+				payload := NewPBFromFeature(&message)
+				// send a message to the client
+				if sendErr = stream.Send(payload); sendErr != nil {
+					level.Error(s.log).Log("send_error", sendErr)
+					close(waitChannel)
+					return
+				}
 			}
 		}
 	}(stream.Context(), waitc)
@@ -80,7 +83,7 @@ func (s *serviceImpl) HalfDuplex(pbReq *pb.Rectangle, stream pb.RouteGuide_HalfD
 		return err
 	}
 	resp := Feature{Name: resName, Location: resLocation}
-	s.broadcastFeature <- resp
+	s.broadcastHalfDuplex <- resp
 	// wait until client has closed or we're having a sending error
 	<-waitc
 	return sendErr
@@ -93,13 +96,22 @@ func (s *serviceImpl) ReverseHalfDuplex(stream pb.RouteGuide_ReverseHalfDuplexSe
 		pbReq, err := stream.Recv()
 		if err == io.EOF {
 			level.Debug(s.log).Log("ReverseHalfDuplexService", "client closed")
+			// TODO : make payload to be returned
+			sendErr := stream.SendAndClose(&pb.RouteSummary{
+				PointCount: 1, FeatureCount: 2, Distance: 3, ElapsedTime: 4,
+			})
+			if sendErr != nil {
+				level.Error(s.log).Log("send_error", sendErr)
+			}
 			return nil // no error, client just closed
 		}
 		if err != nil {
+			level.Error(s.log).Log("receive_error", err)
 			return err // receive error
 		}
 
 		req := NewPointFromPB(pbReq)
+		// store in repository
 		_, _, _, _, err = s.repo.ReverseHalfDuplex(stream.Context(), req.Latitude, req.Longitude)
 		if err != nil {
 			return err
@@ -116,16 +128,17 @@ func (s *serviceImpl) FullDuplex(stream pb.RouteGuide_FullDuplexServer) error {
 	go func(ctx context.Context) {
 		for {
 			select {
-			case message := <-s.broadcastRouteNote:
+			case <-ctx.Done():
+				level.Debug(s.log).Log("FullDuplexService", "Context done (client closed)")
+				return
+			case message := <-s.broadcastFullDuplex:
 				level.Debug(s.log).Log("FullDuplexService", "Sending payload")
 				payload := NewPBFromRouteNote(&message)
 				// send a message to the client
 				if sendErr = stream.Send(payload); sendErr != nil {
+					level.Error(s.log).Log("send_error", sendErr)
 					return
 				}
-			case <-ctx.Done():
-				level.Debug(s.log).Log("FullDuplexService", "Context done (client closed)")
-				return
 			}
 		}
 	}(stream.Context())
@@ -137,6 +150,7 @@ func (s *serviceImpl) FullDuplex(stream pb.RouteGuide_FullDuplexServer) error {
 			return nil // no error, client just closed
 		}
 		if err != nil {
+			level.Error(s.log).Log("receive_error", err)
 			return err // receive error
 		}
 		// checking if sending error has happen previously
@@ -150,7 +164,7 @@ func (s *serviceImpl) FullDuplex(stream pb.RouteGuide_FullDuplexServer) error {
 			return err
 		}
 		resp := RouteNote{Location: resLocation, Message: resMessage}
-		s.broadcastRouteNote <- resp
+		s.broadcastFullDuplex <- resp
 	}
 	// if we had a previous sending error, we're returning it
 	return sendErr

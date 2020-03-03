@@ -32,6 +32,7 @@ type grpcClient struct {
 	GetFeatureEndpoint         endpoint.Endpoint
 	receiveHalfDuplex          chan *Feature      // TODO : collect payloads from this channel
 	broadcastReverseHalfDuplex chan *pb.Point     // TODO : send payloads to this channel
+	closeReverseHalfDuplex     chan struct{}      // TODO : send close "signal" to this channel
 	receiveFullDuplex          chan *RouteNote    // TODO : collect payloads from this channel
 	broadcastFullDuplex        chan *pb.RouteNote // TODO : send payloads to this channel
 	directClient               pb.RouteGuideClient
@@ -43,19 +44,55 @@ func (c *grpcClient) Log() log.Logger {
 	return c.log
 }
 
-func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.ClientOption) Service {
+func (c *grpcClient) ApplyExtraOptions(options ...ClientOption) {
+	for _, option := range options {
+		option(c)
+	}
+}
+
+// getter for receiveHalfDuplex chan Feature
+func (c *grpcClient) ReceiveHalfDuplex() chan *Feature {
+	return c.receiveHalfDuplex
+}
+
+// getter for broadcastReverseHalfDuplex chan *pb.Point
+func (c *grpcClient) BroadcastReverseHalfDuplex() chan *pb.Point {
+	return c.broadcastReverseHalfDuplex
+}
+
+// getter for closeReverseHalfDuplex to end streaming to server
+func (c *grpcClient) CloseReverseHalfDuplex() chan struct{} {
+	return c.closeReverseHalfDuplex
+}
+
+// getter for receiveFullDuplex chan RouteNote
+func (c *grpcClient) ReceiveFullDuplex() chan *RouteNote {
+	return c.receiveFullDuplex
+}
+
+// getter for broadcastFullDuplex chan *pb.RouteNote
+func (c *grpcClient) BroadcastFullDuplex() chan *pb.RouteNote {
+	return c.broadcastFullDuplex
+}
+
+func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.ClientOption) *grpcClient {
 	result := &grpcClient{
 		log:          logger,
 		directClient: pb.NewRouteGuideClient(conn),
 		GetFeatureEndpoint: kitGRPC.NewClient(
 			conn,
-			"routeguide.RouteGuideService",
+			"routeguide.RouteGuide",
 			"GetFeature",
 			encodeGetFeatureGRPCRequest(logger),
 			decodeGetFeatureGRPCResponse(logger),
 			&pb.Feature{},
 			options...,
 		).Endpoint(),
+		receiveHalfDuplex:          make(chan *Feature),
+		broadcastReverseHalfDuplex: make(chan *pb.Point),
+		closeReverseHalfDuplex:     make(chan struct{}),
+		receiveFullDuplex:          make(chan *RouteNote),
+		broadcastFullDuplex:        make(chan *pb.RouteNote),
 	}
 	return result
 }
@@ -113,7 +150,7 @@ func (c *grpcClient) FullDuplex(stream pb.RouteGuide_FullDuplexServer) error {
 }
 
 // usable : implementation of direct client for HalfDuplex - half duplex
-func (c *grpcClient) CallHalfDuplex(extCtx context.Context, lo *Point, hi *Point) (string, *Point, error) {
+func (c *grpcClient) CallHalfDuplex(extCtx context.Context, lo *Point, hi *Point) error {
 	var err error
 	ctx, cancel := context.WithCancel(extCtx)
 
@@ -132,7 +169,7 @@ func (c *grpcClient) CallHalfDuplex(extCtx context.Context, lo *Point, hi *Point
 	stream, err := c.directClient.HalfDuplex(ctx, req, grpc.Header(&header), grpc.Trailer(&trailer))
 	if err != nil {
 		c.log.Log("client_error", err)
-		return "", nil, err
+		return err
 	}
 
 	var closing = func() {
@@ -148,7 +185,7 @@ func (c *grpcClient) CallHalfDuplex(extCtx context.Context, lo *Point, hi *Point
 		if err == io.EOF {
 			closing()
 			// read done.
-			return "", nil, nil
+			return nil
 		}
 		if err != nil {
 			// TODO : if server needs to close, with an error, which is a known error (no-error)
@@ -158,18 +195,18 @@ func (c *grpcClient) CallHalfDuplex(extCtx context.Context, lo *Point, hi *Point
 			//}
 			c.log.Log("client_error", fmt.Sprintf("server return error : %v\n", err))
 			closing()
-			return "", nil, err
+			return err
 		}
 
 		domResp := NewFeatureFromPB(message)
 		c.receiveHalfDuplex <- domResp // writing payloads to this channel, so dev can collect them
 	}
 
-	return "", nil, nil
+	return nil
 }
 
 // usable : implementation of direct client for ReverseHalfDuplex - reverse half duplex
-func (c *grpcClient) CallReverseHalfDuplex(extCtx context.Context) error {
+func (c *grpcClient) CallReverseHalfDuplex(extCtx context.Context) (*RouteSummary, error) {
 	var err error
 	ctx := context.WithValue(extCtx, kitGRPC.ContextKeyRequestMethod, "CallReverseHalfDuplex")
 
@@ -184,15 +221,22 @@ func (c *grpcClient) CallReverseHalfDuplex(extCtx context.Context) error {
 	stream, err := c.directClient.ReverseHalfDuplex(ctx, grpc.Header(&header), grpc.Trailer(&trailer))
 	if err != nil {
 		c.log.Log("client_error", err)
-		return err
+		return nil, err
 	}
 
-	var sendErr error
+	var (
+		sendErr error
+		domResp *RouteSummary
+	)
 	// sending messages loop
 	waitc := make(chan struct{})
 	go func(grCtx context.Context) {
 		for {
 			select {
+			case <-grCtx.Done():
+				c.log.Log("client", "Context done.")
+				close(waitc)
+				return
 			case req := <-c.broadcastReverseHalfDuplex:
 				// TODO : building a request as following :
 				// req := NewPBFromPoint(&Point{ Latitude:latitude,Longitude:longitude, })
@@ -203,23 +247,22 @@ func (c *grpcClient) CallReverseHalfDuplex(extCtx context.Context) error {
 					close(waitc)
 					return
 				}
-
-			case <-grCtx.Done():
-				c.log.Log("client", "Context done.")
+			case <-c.closeReverseHalfDuplex:
+				reply, err := stream.CloseAndRecv()
+				if err != nil {
+					level.Error(c.log).Log("client_error", fmt.Sprintf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil))
+				}
+				level.Debug(c.log).Log("reply", fmt.Sprintf("%#v", reply))
+				for _, f := range c.after {
+					ctx = f(ctx, header, trailer)
+				}
+				domResp = NewRouteSummaryFromPB(reply)
 				close(waitc)
-				return
 			}
 		}
 	}(ctx)
 	<-waitc // block here until context done or send error
-
-	if sendErr == nil { // was context Done
-		stream.CloseSend()
-		for _, f := range c.after {
-			ctx = f(ctx, header, trailer)
-		}
-	}
-	return sendErr
+	return domResp, sendErr
 }
 
 // usable : implementation of direct client for FullDuplex - full duplex
@@ -255,6 +298,9 @@ func (c *grpcClient) CallFullDuplex(extCtx context.Context) error {
 	go func(grCtx context.Context) {
 		for {
 			select {
+			case <-grCtx.Done():
+				c.log.Log("client", "Context done.")
+				return
 			case req := <-c.broadcastFullDuplex:
 				// TODO : building a request as following :
 				// req := NewPBFromRouteNote(&RouteNote{ Location:location,Message:message, })
@@ -264,10 +310,6 @@ func (c *grpcClient) CallFullDuplex(extCtx context.Context) error {
 					c.log.Log("client_error", fmt.Sprintf("Failed to send a request: %v\n", sendErr))
 					return
 				}
-
-			case <-grCtx.Done():
-				c.log.Log("client", "Context done.")
-				return
 			}
 		}
 	}(ctx)

@@ -47,8 +47,8 @@ func NewRepository(logger log.Logger, db interface{}) Repository{
 {{ range .Services}}
     {{- range .Methods }}
     func (r *repositoryImpl) {{- template "funcSignature" . -}}{
-        level.Error(r.log).Log("repository", "not implemented")
-        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} errors.New("not implemented")
+        level.Error(r.log).Log("repository", "repository not implemented")
+        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} errors.New("repository not implemented")
     }
     {{ end }}
 {{- end }}

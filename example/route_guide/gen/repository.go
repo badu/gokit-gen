@@ -42,21 +42,21 @@ func NewRepository(logger log.Logger, db interface{}) Repository {
 }
 
 func (r *repositoryImpl) GetFeature(ctx context.Context, latitude int32, longitude int32) (string, *Point, error) {
-	level.Error(r.log).Log("repository", "not implemented")
-	return "", nil, errors.New("not implemented")
+	level.Error(r.log).Log("repository", "repository not implemented")
+	return "", nil, errors.New("repository not implemented")
 }
 
 func (r *repositoryImpl) HalfDuplex(ctx context.Context, lo *Point, hi *Point) (string, *Point, error) {
-	level.Error(r.log).Log("repository", "not implemented")
-	return "", nil, errors.New("not implemented")
+	level.Error(r.log).Log("repository", "repository not implemented")
+	return "", nil, errors.New("repository not implemented")
 }
 
 func (r *repositoryImpl) ReverseHalfDuplex(ctx context.Context, latitude int32, longitude int32) (int32, int32, int32, int32, error) {
-	level.Error(r.log).Log("repository", "not implemented")
-	return 0, 0, 0, 0, errors.New("not implemented")
+	level.Error(r.log).Log("repository", "repository not implemented")
+	return 0, 0, 0, 0, errors.New("repository not implemented")
 }
 
 func (r *repositoryImpl) FullDuplex(ctx context.Context, location *Point, message string) (*Point, string, error) {
-	level.Error(r.log).Log("repository", "not implemented")
-	return nil, "", errors.New("not implemented")
+	level.Error(r.log).Log("repository", "repository not implemented")
+	return nil, "", errors.New("repository not implemented")
 }

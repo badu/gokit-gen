@@ -44,6 +44,16 @@ func (s Services) AnyOptionNamedValueEq(name, value string) bool {
 	}
 	return false
 }
+func (s Services) HasOptionNamed(name string) bool {
+	for _, svc := range s {
+		for _, meth := range svc.Methods {
+			if meth.Options.HasOneNamed(name) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 type Method struct {
 	Name              string
