@@ -69,6 +69,24 @@ func (s *BaseantlrListener) EnterOptionDeclVar(ctx *OptionDeclVarContext) {}
 // ExitOptionDeclVar is called when production optionDeclVar is exited.
 func (s *BaseantlrListener) ExitOptionDeclVar(ctx *OptionDeclVarContext) {}
 
+// EnterExtend is called when production extend is entered.
+func (s *BaseantlrListener) EnterExtend(ctx *ExtendContext) {}
+
+// ExitExtend is called when production extend is exited.
+func (s *BaseantlrListener) ExitExtend(ctx *ExtendContext) {}
+
+// EnterExtendDecl is called when production extendDecl is entered.
+func (s *BaseantlrListener) EnterExtendDecl(ctx *ExtendDeclContext) {}
+
+// ExitExtendDecl is called when production extendDecl is exited.
+func (s *BaseantlrListener) ExitExtendDecl(ctx *ExtendDeclContext) {}
+
+// EnterExtendName is called when production extendName is entered.
+func (s *BaseantlrListener) EnterExtendName(ctx *ExtendNameContext) {}
+
+// ExitExtendName is called when production extendName is exited.
+func (s *BaseantlrListener) ExitExtendName(ctx *ExtendNameContext) {}
+
 // EnterMessage is called when production message is entered.
 func (s *BaseantlrListener) EnterMessage(ctx *MessageContext) {}
 

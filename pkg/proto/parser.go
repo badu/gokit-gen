@@ -18,10 +18,10 @@ type Proto struct {
 	Name        string
 	Syntax      string
 	PackageName string
-	Options     []Option
+	Options     Options
 	Imports     []string
 	Messages    []Message
-	Services    []Service
+	Services    Services
 	Enums       []Enum
 	Error       *ErrNode
 }
@@ -29,14 +29,27 @@ type Proto struct {
 type Service struct {
 	Name    string
 	Methods []Method
-	Options []Option
+	Options Options
+}
+
+type Services []Service
+
+func (s Services) AnyOptionNamedValueEq(name, value string) bool {
+	for _, svc := range s {
+		for _, meth := range svc.Methods {
+			if meth.Options.NamedValueEq(name, value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type Method struct {
 	Name              string
 	InKind            string
 	OutKind           string
-	Options           []Option
+	Options           Options
 	IsServerStreaming bool
 	IsClientStreaming bool
 }
@@ -48,7 +61,7 @@ func (m *Method) NoStreaming() bool {
 type Message struct {
 	Name     string
 	Fields   Fields
-	Options  []Option
+	Options  Options
 	Enums    []Enum
 	Messages []Message // nested messages
 	IsNested bool
@@ -57,7 +70,7 @@ type Message struct {
 type Enum struct {
 	Name       string
 	ParentName string
-	Options    []Option
+	Options    Options
 	Fields     Fields
 	IsEmbedded bool
 }
@@ -71,7 +84,7 @@ type Field struct {
 	Kind        string
 	MapKind     KeyValue
 	Pos         string
-	Options     []Option
+	Options     Options
 	OneOf       Fields
 	IsEnumField bool // belongs to enum fields
 	IsRepeated  bool
@@ -241,6 +254,35 @@ type Option struct {
 	IsConstant bool
 }
 
+type Options []Option
+
+func (o Options) HasOneNamed(name string) bool {
+	for _, opt := range o {
+		if opt.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (o Options) NamedValueEq(name, value string) bool {
+	for _, opt := range o {
+		if opt.Name == name && opt.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (o Options) NamedValue(name string) string {
+	for _, opt := range o {
+		if opt.Name == name {
+			return opt.Value
+		}
+	}
+	return ""
+}
+
 type KeyValue struct {
 	Key   string
 	Value string
@@ -331,10 +373,19 @@ func makeOption(ctx *parser.OptionContext) Option {
 		log.Print("expecting *OptionNameContext")
 		return result
 	}
+	willPrintIdents := false
+	if len(nameCtx.AllIdent()) > 1 {
+		willPrintIdents = true
+	}
 	for _, ident := range nameCtx.AllIdent() {
+		if willPrintIdents {
+			log.Printf("%d option idents found : %q", len(nameCtx.AllIdent()), ident.GetText())
+		}
 		result.Name += ident.GetText()
 	}
-
+	if nameCtx.FullIdent() != nil {
+		result.Name = nameCtx.FullIdent().GetText()
+	}
 	if ctx.OptionDecl() != nil {
 		od, ok := ctx.OptionDecl().(*parser.OptionDeclContext)
 		if !ok {
@@ -352,8 +403,8 @@ func makeOption(ctx *parser.OptionContext) Option {
 	return result
 }
 
-func makeOptions(ctx []parser.IOptionContext) []Option {
-	var result []Option
+func makeOptions(ctx []parser.IOptionContext) Options {
+	var result Options
 	for _, optDecl := range ctx {
 		optCtx, ok := optDecl.(*parser.OptionContext)
 		if !ok {
@@ -365,8 +416,8 @@ func makeOptions(ctx []parser.IOptionContext) []Option {
 	return result
 }
 
-func makeKeyValueOptions(ctx []parser.IKeyValueContext) []Option {
-	var result []Option
+func makeKeyValueOptions(ctx []parser.IKeyValueContext) Options {
+	var result Options
 	for _, kvDecl := range ctx {
 		kvCtx, ok := kvDecl.(*parser.KeyValueContext)
 		if !ok {
@@ -446,22 +497,34 @@ func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string) Fields {
 			log.Print("expecting *FieldContext")
 			continue
 		}
+		name := ""
 		if fieldCtx.Ident() == nil {
-			log.Print("no ident provided for field")
-			continue
+			if fieldCtx.ReservedWord() == nil {
+				log.Printf("no ident provided for field (and no reserved word)")
+				continue
+			}
+			res, ok := fieldCtx.ReservedWord().(*parser.ReservedWordContext)
+			if !ok {
+				log.Printf("expecting *ReservedWordContext")
+				continue
+			}
+			name = res.GetText()
+		} else {
+			name = fieldCtx.Ident().GetText()
 		}
 
 		if fieldCtx.IntLit() == nil {
 			log.Print("no pos provided for field")
 			continue
 		}
+
 		if fieldCtx.FieldType() == nil {
 			log.Print("no field type provided")
 			continue
 		}
 
 		kind := fieldCtx.FieldType().GetText()
-		field := Field{Name: fieldCtx.Ident().GetText(), Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil}
+		field := Field{Name: name, Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil}
 
 		// fix embed enums fields
 		if alterName, has := enumsMap[kind]; has {

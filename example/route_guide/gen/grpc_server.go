@@ -129,7 +129,7 @@ type RequestAndStreamHalfDuplex struct {
 	Stream  pb.RouteGuide_HalfDuplexServer
 }
 
-// no streaming for GetFeature
+// protobuf implementation : no streaming for GetFeature
 func (s *GRPCServer) GetFeature(ctx context.Context, req *pb.Point) (*pb.Feature, error) {
 	_, resp, err := s.GetFeatureGRPCHandler.ServeGRPC(ctx, req)
 	if err != nil {
@@ -143,20 +143,20 @@ func (s *GRPCServer) GetFeature(ctx context.Context, req *pb.Point) (*pb.Feature
 	return pbResp, nil
 }
 
-// half duplex for HalfDuplex
+// protobuf implementation : half duplex for HalfDuplex
 func (s *GRPCServer) HalfDuplex(req *pb.Rectangle, stream pb.RouteGuide_HalfDuplexServer) error {
 	reqNStream := &RequestAndStreamHalfDuplex{Request: req, Stream: stream}
 	_, _, err := s.HalfDuplexGRPCHandler.ServeGRPC(stream.Context(), reqNStream)
 	return err
 }
 
-// reverse half duplex for ReverseHalfDuplex
+// protobuf implementation : reverse half duplex for ReverseHalfDuplex
 func (s *GRPCServer) ReverseHalfDuplex(stream pb.RouteGuide_ReverseHalfDuplexServer) error {
 	_, _, err := s.ReverseHalfDuplexGRPCHandler.ServeGRPC(stream.Context(), stream)
 	return err
 }
 
-// full duplex for FullDuplex
+// protobuf implementation : full duplex for FullDuplex
 func (s *GRPCServer) FullDuplex(stream pb.RouteGuide_FullDuplexServer) error {
 	_, _, err := s.FullDuplexGRPCHandler.ServeGRPC(stream.Context(), stream)
 	return err

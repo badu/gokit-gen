@@ -29,7 +29,7 @@ type Repository interface {
 	GetFeature(ctx context.Context, latitude int32, longitude int32) (string, *Point, error)
 	HalfDuplex(ctx context.Context, lo *Point, hi *Point) (string, *Point, error)
 	ReverseHalfDuplex(ctx context.Context, latitude int32, longitude int32) (int32, int32, int32, int32, error)
-	FullDuplex(ctx context.Context, location *Point) (*Point, error)
+	FullDuplex(ctx context.Context, location *Point, message string) (*Point, string, error)
 }
 
 type repositoryImpl struct {
@@ -56,7 +56,7 @@ func (r *repositoryImpl) ReverseHalfDuplex(ctx context.Context, latitude int32, 
 	return 0, 0, 0, 0, errors.New("not implemented")
 }
 
-func (r *repositoryImpl) FullDuplex(ctx context.Context, location *Point) (*Point, error) {
+func (r *repositoryImpl) FullDuplex(ctx context.Context, location *Point, message string) (*Point, string, error) {
 	level.Error(r.log).Log("repository", "not implemented")
-	return nil, errors.New("not implemented")
+	return nil, "", errors.New("not implemented")
 }

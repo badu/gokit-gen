@@ -22,6 +22,7 @@ proto
                |   message
                |   enum
                |   service
+               |   extend
                |   SEMI
                )*
         EOF
@@ -56,6 +57,16 @@ optionName : (Ident | LPAREN fullIdent RPAREN ) (DOT (Ident | reservedWord))* ;
 optionDecl : LBRACE (optionDeclVar)* RBRACE ;
 
 optionDeclVar : optionName ':' constant ;
+
+//
+// Extend
+//
+
+extend : EXTEND extendName extendDecl ;
+
+extendDecl :   LBRACE ( field )* RBRACE ;
+
+extendName : ( Ident | fullIdent );
 
 // Message definition
 
@@ -193,6 +204,7 @@ reservedWord
     |   SYNTAX
     |   WEAK
     |   RPC
+    |   EXTEND
     ;
 //
 // Lexical elements
@@ -204,6 +216,7 @@ BOOL            : 'bool';
 BYTES           : 'bytes';
 DOUBLE          : 'double';
 ENUM            : 'enum';
+EXTEND          : 'extend';
 FIXED32         : 'fixed32';
 FIXED64         : 'fixed64';
 FLOAT           : 'float';

@@ -31,6 +31,17 @@ func NewService(log log.Logger, repo Repository) Service {
 func (s *serviceImpl) Log() log.Logger {
 	return s.log
 }
+
+// getter for BroadcastFeature chan Feature
+func (s *serviceImpl) BroadcastFeature() chan Feature {
+	return s.broadcastFeature
+}
+
+// getter for BroadcastRouteNote chan RouteNote
+func (s *serviceImpl) BroadcastRouteNote() chan RouteNote {
+	return s.broadcastRouteNote
+}
+
 func (s *serviceImpl) GetFeature(ctx context.Context, latitude int32, longitude int32) (string, *Point, error) {
 	resName, resLocation, err := s.repo.GetFeature(ctx, latitude, longitude)
 	if err != nil {
@@ -134,11 +145,11 @@ func (s *serviceImpl) FullDuplex(stream pb.RouteGuide_FullDuplexServer) error {
 		}
 
 		req := NewRouteNoteFromPB(pbReq)
-		resLocation, err := s.repo.FullDuplex(stream.Context(), req.Location)
+		resLocation, resMessage, err := s.repo.FullDuplex(stream.Context(), req.Location, req.Message)
 		if err != nil {
 			return err
 		}
-		resp := RouteNote{Location: resLocation}
+		resp := RouteNote{Location: resLocation, Message: resMessage}
 		s.broadcastRouteNote <- resp
 	}
 	// if we had a previous sending error, we're returning it

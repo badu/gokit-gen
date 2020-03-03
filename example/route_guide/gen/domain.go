@@ -17,6 +17,7 @@ type Feature struct {
 
 type RouteNote struct {
 	Location *Point
+	Message  string
 }
 
 type RouteSummary struct {

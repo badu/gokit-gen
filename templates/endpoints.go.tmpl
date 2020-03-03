@@ -24,7 +24,7 @@ type Endpoints struct {
                 {{.Name}}Endpoint endpoint.Endpoint // half duplex
             {{- else if and (not .IsServerStreaming) .IsClientStreaming }}                
                 {{.Name}}Endpoint endpoint.Endpoint // reverse half duplex
-            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}                
+            {{- else if and .IsServerStreaming .IsClientStreaming }}
                 {{.Name}}Endpoint endpoint.Endpoint //  full duplex
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
@@ -99,7 +99,7 @@ func MakeEndpoints(svc Service, mwares []endpoint.Middleware) Endpoints {
                     return nil,nil
                 }
             }            
-        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+        {{- else if and .IsServerStreaming .IsClientStreaming }}
             // full duplex
             func make{{.Name}}Endpoint(svc Service) endpoint.Endpoint {
                 return func(ctx context.Context, req interface{}) (interface{}, error) {

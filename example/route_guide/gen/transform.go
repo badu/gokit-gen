@@ -77,6 +77,7 @@ func NewRouteNoteFromPB(msg *pb.RouteNote) *RouteNote {
 	}
 	var result RouteNote
 	result.Location = NewPointFromPB(msg.Location)
+	result.Message = msg.Message
 	return &result
 }
 
@@ -87,6 +88,7 @@ func NewPBFromRouteNote(msg *RouteNote) *pb.RouteNote {
 	}
 	var result pb.RouteNote
 	result.Location = NewPBFromPoint(msg.Location)
+	result.Message = msg.Message
 	return &result
 }
 

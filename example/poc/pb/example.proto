@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package pb;
+
+service Streams {
+	rpc HalfDuplex (Request) returns (stream Reply) {}
+	rpc FullDuplex (stream Request) returns (stream Reply) {}
+}
+
+message Request {
+	string msg = 1;
+}
+
+message Reply {
+	string msg = 1;
+}

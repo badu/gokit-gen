@@ -2,11 +2,11 @@
 
 Provide a .proto file, get a go-kit generated package
 
-# install
+## install
 
 `go get -u github.com/badu/gokit-gen`
 
-# parameters
+## parameters
 
 1. proto file - can be absolute or relative
 
@@ -36,5 +36,5 @@ Note : Might want to save this command to `.bashrc`
 
 Inside /pkg/antlr folder run :
 
-`antlr -Dlanguage=Go -o parser Protobuf3.g4`
+`antlr -Dlanguage=Go -o parser antlr.g4`
  

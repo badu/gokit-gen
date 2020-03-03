@@ -32,6 +32,15 @@ type antlrListener interface {
 	// EnterOptionDeclVar is called when entering the optionDeclVar production.
 	EnterOptionDeclVar(c *OptionDeclVarContext)
 
+	// EnterExtend is called when entering the extend production.
+	EnterExtend(c *ExtendContext)
+
+	// EnterExtendDecl is called when entering the extendDecl production.
+	EnterExtendDecl(c *ExtendDeclContext)
+
+	// EnterExtendName is called when entering the extendName production.
+	EnterExtendName(c *ExtendNameContext)
+
 	// EnterMessage is called when entering the message production.
 	EnterMessage(c *MessageContext)
 
@@ -139,6 +148,15 @@ type antlrListener interface {
 
 	// ExitOptionDeclVar is called when exiting the optionDeclVar production.
 	ExitOptionDeclVar(c *OptionDeclVarContext)
+
+	// ExitExtend is called when exiting the extend production.
+	ExitExtend(c *ExtendContext)
+
+	// ExitExtendDecl is called when exiting the extendDecl production.
+	ExitExtendDecl(c *ExtendDeclContext)
+
+	// ExitExtendName is called when exiting the extendName production.
+	ExitExtendName(c *ExtendNameContext)
 
 	// ExitMessage is called when exiting the message production.
 	ExitMessage(c *MessageContext)

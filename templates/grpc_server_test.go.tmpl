@@ -50,7 +50,7 @@ func generateJWTMeta() string {
 
 func TestMain(m *testing.M) {
 	serverLogger := log.NewLogfmtLogger(os.Stderr)
-	serverLogger = log.With(serverLogger, "caller", log.Caller(7))
+	serverLogger = log.With(serverLogger, "caller", log.DefaultCaller)
 	serverLogger = level.NewFilter(serverLogger, level.AllowDebug())
 	
 	grpcService     := NewService(serverLogger, &MockedRepository{})
@@ -66,14 +66,18 @@ func TestMain(m *testing.M) {
 	{{ if hasStreaming }}
 	options := []kitGRPC.ServerOption{
 		kitGRPC.ServerBefore(kitJWT.GRPCToContext()),
-		//kitGRPC.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, serverLogger)),
+		{{- if .Services.AnyOptionNamedValueEq "security" "jwt" }}
+			//kitGRPC.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, serverLogger)),
+		{{- end }}
 		//kitGRPC.ServerBefore(MakeAddStreamUUID(serverLogger)),
 	}
 	{{ else }}
 	options := []kitGRPC.ServerOption{
 		kitGRPC.ServerErrorHandler(transport.NewLogErrorHandler(serverLogger)),
 		kitGRPC.ServerBefore(kitJWT.GRPCToContext()),
-		//kitGRPC.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, serverLogger)),
+		{{- if .Services.AnyOptionNamedValueEq "security" "jwt" }}
+			//kitGRPC.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, serverLogger)),
+		{{- end }}
 	}
 	{{ end }}
 	service, err := NewGRPCServer(endpoints, serverLogger, options...)
@@ -93,8 +97,8 @@ func TestMain(m *testing.M) {
 
 {{- range $service := .Services }}
     {{ $serviceName := .Name | upperFirst }}
-    {{- range $method := $service.Methods}} 
-        {{- if and $method.NoStreaming}}            
+    {{- range $method := $service.Methods}}
+		{{- if and $method.NoStreaming}}            
 			func TestGRPC{{.Name}}(t *testing.T){
 				logger := log.NewLogfmtLogger(os.Stderr)
 				logger = log.With(logger, "caller", log.Caller(7))
@@ -108,7 +112,9 @@ func TestMain(m *testing.M) {
 				clientOptions := []kitGRPC.ClientOption{ kitGRPC.ClientBefore(kitJWT.ContextToGRPC()) }
 				client := NewClient(conn, logger, clientOptions...)
 				
-				ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{ if .Options.NamedValueEq "security" "jwt" }}
+					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{- end }}
 				// TODO : load the payloads
 				{{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
 				if err != nil {
@@ -121,13 +127,88 @@ func TestMain(m *testing.M) {
 			}    
         {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
             // TODO : half duplex for {{.Name}}
-            
+            func TestGRPC{{.Name}}(t *testing.T){
+				logger := log.NewLogfmtLogger(os.Stderr)
+				logger = log.With(logger, "caller", log.Caller(7))
+				logger = level.NewFilter(logger, level.AllowDebug())
+
+				conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+				if err != nil {
+					t.Fatalf("unable to Dial: %+v", err)
+				}
+				
+				clientOptions := []kitGRPC.ClientOption{ kitGRPC.ClientBefore(kitJWT.ContextToGRPC()) }
+				client := NewClient(conn, logger, clientOptions...)
+				
+				{{ if .Options.NamedValueEq "security" "jwt" }}
+					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{- end }}
+				// TODO : load the payloads
+				{{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
+				if err != nil {
+					t.Fatalf("unable to test: %+v", err)
+				}
+				// TODO : check response (write the actual test)         
+				{{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}  
+				t.Logf("{{lowerFirst .PublicName}} : %v", {{lowerFirst .PublicName}}) 
+				{{- end }}          
+			}
         {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
             // TODO : reverse half duplex for {{.Name}}
-                  
-        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+            func TestGRPC{{.Name}}(t *testing.T){
+				logger := log.NewLogfmtLogger(os.Stderr)
+				logger = log.With(logger, "caller", log.Caller(7))
+				logger = level.NewFilter(logger, level.AllowDebug())
+
+				conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+				if err != nil {
+					t.Fatalf("unable to Dial: %+v", err)
+				}
+				
+				clientOptions := []kitGRPC.ClientOption{ kitGRPC.ClientBefore(kitJWT.ContextToGRPC()) }
+				client := NewClient(conn, logger, clientOptions...)
+				
+				{{ if .Options.NamedValueEq "security" "jwt" }}
+					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{- end }}
+				// TODO : load the payloads
+				{{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
+				if err != nil {
+					t.Fatalf("unable to test: %+v", err)
+				}
+				// TODO : check response (write the actual test)         
+				{{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}  
+				t.Logf("{{lowerFirst .PublicName}} : %v", {{lowerFirst .PublicName}}) 
+				{{- end }}          
+			}      
+        {{- else if and .IsServerStreaming .IsClientStreaming }}
             // TODO : full duplex for {{.Name}}
-               
+            func TestGRPC{{.Name}}(t *testing.T){
+				logger := log.NewLogfmtLogger(os.Stderr)
+				logger = log.With(logger, "caller", log.Caller(7))
+				logger = level.NewFilter(logger, level.AllowDebug())
+
+				conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+				if err != nil {
+					t.Fatalf("unable to Dial: %+v", err)
+				}
+				
+				clientOptions := []kitGRPC.ClientOption{ kitGRPC.ClientBefore(kitJWT.ContextToGRPC()) }
+				client := NewClient(conn, logger, clientOptions...)
+				
+				{{ if .Options.NamedValueEq "security" "jwt" }}
+					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{- end }}
+				// TODO : load the payloads
+				{{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
+				if err != nil {
+					t.Fatalf("unable to test: %+v", err)
+				}
+				// TODO : check response (write the actual test)         
+				{{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}  
+				t.Logf("{{lowerFirst .PublicName}} : %v", {{lowerFirst .PublicName}}) 
+				{{- end }}          
+			}   
         {{- end }} {{/* streaming ifs*/}}
     {{ end }} {{/* range Method */}}
 {{- end }} {{/* range services */}}

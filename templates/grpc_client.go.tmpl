@@ -16,6 +16,19 @@ import(
     pb "{{ go_package }}"
     kitGRPC "github.com/go-kit/kit/transport/grpc"
 )
+{{ if hasStreaming }}
+type ClientOption func(*grpcClient)
+type ClientRequestFunc func(context.Context, *metadata.MD) context.Context
+type ClientResponseFunc func(context.Context, metadata.MD, metadata.MD) context.Context
+
+func ClientBefore(before ...ClientRequestFunc) ClientOption {
+	return func(c *grpcClient) { c.before = append(c.before, before...) }
+}
+
+func ClientAfter(after ...ClientResponseFunc) ClientOption {
+	return func(c *grpcClient) { c.after = append(c.after, after...) }
+}
+{{ end }}
 
 type grpcClient struct{
 	log log.Logger
@@ -24,13 +37,19 @@ type grpcClient struct{
             {{- if .NoStreaming }}
                 {{.Name}}Endpoint endpoint.Endpoint
             {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
-                //{{.Name}}Endpoint endpoint.Endpoint // half duplex
+                receive{{.Name}} chan *{{.OutKind}} // TODO : collect payloads from this channel
             {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
-                //{{.Name}}Endpoint endpoint.Endpoint // reverse half duplex
-            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
-                //{{.Name}}Endpoint endpoint.Endpoint  // full duplex
+                broadcast{{.Name}} chan *pb.{{.InKind}} // TODO : send payloads to this channel
+            {{- else if and .IsServerStreaming .IsClientStreaming }}
+                receive{{.Name}} chan *{{.OutKind}} // TODO : collect payloads from this channel
+                broadcast{{.Name}} chan *pb.{{.InKind}} // TODO : send payloads to this channel
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
+        {{- if hasStreaming }}
+            directClient    pb.{{$service.Name}}Client
+            before    []ClientRequestFunc
+            after     []ClientResponseFunc           
+        {{- end }}
     {{- end }} {{/* range services */}}
 }
 
@@ -39,11 +58,15 @@ func (c *grpcClient) Log() log.Logger {
 }
 
 func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.ClientOption) Service {
-	return &grpcClient{
-		log:logger, {{- range $service := .Services }}
-            {{ $serviceName := .Name }}
-            {{ range $method := $service.Methods}}
-            {{- if and $method.NoStreaming}}	
+	result := &grpcClient{
+		log:logger,        
+        {{- range $service := .Services }}
+            {{- $serviceName := .Name -}}
+            {{- if hasStreaming }}
+                directClient: pb.New{{$service.Name}}Client(conn),
+            {{- end }} 
+            {{- range $method := $service.Methods}}
+                {{- if and $method.NoStreaming}}	
                     {{.Name }}Endpoint : kitGRPC.NewClient(
 						conn,
 						"{{ pb_package }}.{{ $serviceName }}Service",
@@ -53,11 +76,13 @@ func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.Clie
 						&pb.{{.OutKind}}{},
 						options...,
 					).Endpoint(),
-            {{- end }}{{/* if-else no streaming */}}{{ end }}{{/* range Method */}}
+            {{- end }}{{/* if-else no streaming */}}
+            {{ end }}{{/* range Method */}}
         {{- end }} {{/* range services */}}
 	}
+    return result
 }
-
+{{/* service interface implementation */}}
 {{- range $service := .Services }}
     {{ $serviceName := .Name | upperFirst }}
     {{- range $method := $service.Methods}}            
@@ -108,11 +133,206 @@ func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.Clie
             func (c *grpcClient) {{.Name}}(stream pb.{{ $serviceName }}_{{.Name}}Server) error {
 		        return nil
 		    }      
-        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+        {{- else if and .IsServerStreaming .IsClientStreaming }}
             // unusable : client has to implement Service interface for full duplex {{.Name}}
             func (c *grpcClient) {{.Name}}(stream pb.{{ $serviceName }}_{{.Name}}Server) error {
 				return nil
 		    }   
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+{{/* direct client methods */}}
+{{- range $service := .Services }}
+    {{ $serviceName := .Name | upperFirst }}
+    {{- range $method := $service.Methods}}            
+        {{- if and .IsServerStreaming (not .IsClientStreaming) }}
+            // usable : implementation of direct client for {{ .Name }} - half duplex
+            func (c *grpcClient) Call{{ .Name }}(extCtx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error) {
+                var err error
+                ctx, cancel := context.WithCancel(extCtx)
+
+                ctx = context.WithValue(ctx, kitGRPC.ContextKeyRequestMethod, "Call{{.Name}}")
+
+                req := NewPBFrom{{.InKind}}(&{{ .InKind }}{ {{ template "requestSignature" . }} })
+                
+                md := &metadata.MD{}
+                for _, f := range c.before {
+                    ctx = f(ctx, md)
+                }
+                ctx = metadata.NewOutgoingContext(ctx, *md)
+
+                var header, trailer metadata.MD
+
+                stream, err := c.directClient.{{ .Name }}(ctx, req, grpc.Header(&header), grpc.Trailer(&trailer))
+                if err != nil {
+                    c.log.Log("client_error", err)
+                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }} err
+                }
+
+                var closing = func() {
+                    cancel()
+                    stream.CloseSend()
+                    for _, f := range c.after {
+                        ctx = f(ctx, header, trailer)
+                    }
+                }
+                // receiving from server loop
+                for {
+                    message, err := stream.Recv()
+                    if err == io.EOF {
+                        closing()
+                        // read done.
+                        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }} nil
+                    }
+                    if err != nil {
+                        // TODO : if server needs to close, with an error, which is a known error (no-error)
+                        //if err == CloseCommunication {
+                        //    closing()
+                        //    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }} nil
+                        //}
+                        c.log.Log("client_error", fmt.Sprintf("server return error : %v\n", err))
+                        closing()
+                        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }} err
+                    }
+
+                    domResp := New{{.OutKind}}FromPB(message)
+                    c.receive{{.Name}} <- domResp // writing payloads to this channel, so dev can collect them
+                }
+
+                return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }} nil
+            }
+        {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
+             // usable : implementation of direct client for {{ .Name }} - reverse half duplex
+             func (c *grpcClient) Call{{ .Name }}(extCtx context.Context) error {
+                var err error
+                ctx := context.WithValue(extCtx, kitGRPC.ContextKeyRequestMethod, "Call{{.Name}}")
+
+                md := &metadata.MD{}
+                for _, f := range c.before {
+                    ctx = f(ctx, md)
+                }
+                ctx = metadata.NewOutgoingContext(ctx, *md)
+
+                var header, trailer metadata.MD
+
+                stream, err := c.directClient.{{ .Name }}(ctx, grpc.Header(&header), grpc.Trailer(&trailer))
+                if err != nil {
+                    c.log.Log("client_error", err)
+                    return err
+                }
+
+                var sendErr error
+                // sending messages loop
+                waitc := make(chan struct{})
+                go func(grCtx context.Context) {
+                    for {
+                        select {
+                        case req := <-c.broadcast{{.Name}}:
+                            // TODO : building a request as following : 
+                            // req := NewPBFrom{{.InKind}}(&{{ .InKind }}{ {{ template "requestSignature" . }} })
+                            // then write it to the channel:
+                            // c.broadcast{{.Name}} <- req
+                            if sendErr = stream.Send(req); sendErr != nil {
+                                c.log.Log("client_error", fmt.Sprintf("Failed to send a request: %v\n", sendErr))
+                                close(waitc)
+                                return
+                            }
+
+                        case <-grCtx.Done():
+                            c.log.Log("client", "Context done.")
+                            close(waitc)
+                            return
+                        }
+                    }
+                }(ctx)
+                <-waitc // block here until context done or send error
+
+                if sendErr == nil { // was context Done
+                    stream.CloseSend()
+                    for _, f := range c.after {
+                        ctx = f(ctx, header, trailer)
+                    }
+                }
+                return sendErr
+            }
+        {{- else if and .IsServerStreaming .IsClientStreaming }}
+            // usable : implementation of direct client for {{ .Name }} - full duplex
+            func (c *grpcClient) Call{{ .Name }}(extCtx context.Context) error {
+                var err error
+                ctx, cancel := context.WithCancel(extCtx)
+
+                ctx = context.WithValue(ctx, kitGRPC.ContextKeyRequestMethod, "Call{{.Name}}")
+                   
+                md := &metadata.MD{}
+                for _, f := range c.before {
+                    ctx = f(ctx, md)
+                }
+                ctx = metadata.NewOutgoingContext(ctx, *md)
+
+                var header, trailer metadata.MD
+
+                stream, err := c.directClient.{{ .Name }}(ctx, grpc.Header(&header), grpc.Trailer(&trailer))
+                if err != nil {
+                    c.log.Log("client_error", err)
+                    return err
+                }
+
+                var closing = func() {
+                    cancel()
+                    stream.CloseSend()
+                    for _, f := range c.after {
+                        ctx = f(ctx, header, trailer)
+                    }
+                }
+                var sendErr error
+                // sending messages loop
+                go func(grCtx context.Context) {
+                    for {
+                        select {
+                        case req := <-c.broadcast{{.Name}}:
+                            // TODO : building a request as following : 
+                            // req := NewPBFrom{{.InKind}}(&{{ .InKind }}{ {{ template "requestSignature" . }} })
+                            // then write it to the channel:
+                            // c.broadcast{{.Name}} <- req
+                            if sendErr = stream.Send(req); sendErr != nil {
+                                c.log.Log("client_error", fmt.Sprintf("Failed to send a request: %v\n", sendErr))
+                                return
+                            }
+
+                        case <-grCtx.Done():
+                            c.log.Log("client", "Context done.")
+                            return
+                        }
+                    }
+                }(ctx)
+                // receiving from server loop
+                for {
+                    message, err := stream.Recv()
+                    if err == io.EOF {
+                        closing()
+                        // read done.
+                        return nil
+                    }
+                    if err != nil {
+                        // TODO : if server needs to close, with an error, which is a known error (no-error)
+                        //if err == CloseCommunication {
+                        //    closing()
+                        //    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }} nil
+                        //}
+                        c.log.Log("client_error", fmt.Sprintf("server return error : %v\n", err))
+                        closing()
+                        return  err
+                    }
+                    if sendErr != nil {
+                        return sendErr
+                    }
+                    domResp := New{{.OutKind}}FromPB(message)
+                    c.receive{{.Name}} <- domResp // writing payloads to this channel, so dev can collect them
+                }
+
+                return nil
+            }
         {{- end }} {{/* streaming ifs*/}}
     {{ end }} {{/* range Method */}}
 {{- end }} {{/* range services */}}

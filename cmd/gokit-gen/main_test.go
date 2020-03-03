@@ -19,9 +19,10 @@ func Test(t *testing.T) {
 	args := []string{"", protoFile, templatesDir, packageName, deployTo}
 
 	var stdout bytes.Buffer
-
+	//log.Print("Run")
 	err := run(args, &stdout)
 	if err != nil {
 		t.Fatalf("error : %v", err)
 	}
+	//log.Print("Done")
 }

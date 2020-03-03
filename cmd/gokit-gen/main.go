@@ -196,6 +196,7 @@ func provideFile(statikFS http.FileSystem, path string) (string, error) {
 }
 
 func buildContent(statikFS http.FileSystem, templateDir, templateFilename string, funcMap template.FuncMap, prt *proto.Proto) ([]byte, error) {
+	//log.Printf("processing file %q", templateFilename)
 	var (
 		tmpl *template.Template
 		err  error
@@ -208,7 +209,6 @@ func buildContent(statikFS http.FileSystem, templateDir, templateFilename string
 		if err != nil {
 			return nil, err
 		}
-
 		tmpl, err = template.New(templateName).Funcs(funcMap).Parse(content)
 	} else {
 		// template init
@@ -235,13 +235,14 @@ func buildContent(statikFS http.FileSystem, templateDir, templateFilename string
 		return optImports, err
 
 	}
+	//log.Printf("%q ok", templateFilename)
 	return formatted, nil
 }
 
-// protoc --go_out=plugins=grpc:. stock_shared.proto
 func run(args []string, stdout io.Writer) error {
 	var err error
 	if len(args) < 4 {
+		log.Print("Usage")
 		fmt.Fprint(stdout, "Usage: \n gokit-gen <protofile.proto> <templates_folder> <target_package_path> [optional <output_folder>] \n"+
 			"<protofile> can be a relative path\n"+
 			"<templates_folder> can be a relative path\n"+
@@ -339,6 +340,7 @@ out:
 			break
 		}
 	}
+
 	if goPackage == "" {
 		return errors.New("undefined go package")
 	}

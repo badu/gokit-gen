@@ -23,7 +23,7 @@ type Service interface {
                 {{.Name}}(req *pb.{{.InKind}}, stream pb.{{$service.Name}}_{{.Name}}Server) error // half duplex (client request, server streams)
             {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
                 {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error // reverse half duplex (client streams, server responds)
-            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+            {{- else if and .IsServerStreaming .IsClientStreaming }}
                 {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error // full duplex (both client and server streams)
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
@@ -50,6 +50,18 @@ func NewService(log log.Logger, repo Repository) Service{
 func (s *serviceImpl) Log() log.Logger {
 	return s.log
 }
+
+{{- range $service := .Services }}
+    {{- range $method := $service.Methods}}
+        {{- if .IsServerStreaming }}
+            // getter for Broadcast{{.OutKind}} chan {{.OutKind}}
+            func (s *serviceImpl) Broadcast{{.OutKind}}() chan {{.OutKind}}{
+                return s.broadcast{{.OutKind}}
+            }
+        {{- end }}
+    {{- end }}
+{{ end }}
+
 {{- range $service := .Services }}
     {{- range $method := $service.Methods}}
         {{- if and $method.NoStreaming}}
@@ -119,7 +131,7 @@ func (s *serviceImpl) Log() log.Logger {
                 
                 return nil
             }
-        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+        {{- else if and .IsServerStreaming .IsClientStreaming }}
             // full duplex for {{.Name}}
             func (s *serviceImpl) {{.Name}}(stream pb.{{$service.Name}}_{{.Name}}Server) error{       
                  // server sending loop. exit conditions : client closes or sending error

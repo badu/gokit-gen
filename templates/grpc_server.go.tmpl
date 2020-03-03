@@ -22,7 +22,7 @@ type GRPCServer struct {
                 {{.Name}}GRPCHandler kitGRPC.Handler // TODO : half duplex
             {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
                 {{.Name}}GRPCHandler kitGRPC.Handler // TODO : reverse half duplex
-            {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
+            {{- else if and .IsServerStreaming .IsClientStreaming }}
                 {{.Name}}GRPCHandler kitGRPC.Handler  // TODO : full duplex
             {{- end}} {{/* streaming ifs*/}}
         {{- end}} {{/* range Method */}}
@@ -115,7 +115,7 @@ func NewGRPCServer(endpoints Endpoints, logger log.Logger, options ...kitGRPC.Se
     {{ $serviceName := .Name | upperFirst }}
     {{- range $method := $service.Methods}}
         {{- if $method.NoStreaming}}
-            // no streaming for {{ .Name }}            
+            // protobuf implementation : no streaming for {{ .Name }}            
             func (s *GRPCServer) {{.Name}}(ctx context.Context, req *pb.{{.InKind}}) (*pb.{{.OutKind}}, error) {
                 _, resp, err := s.{{.Name}}GRPCHandler.ServeGRPC(ctx, req)
                 if err != nil {
@@ -129,20 +129,20 @@ func NewGRPCServer(endpoints Endpoints, logger log.Logger, options ...kitGRPC.Se
                 return pbResp, nil
             }
         {{- else if and .IsServerStreaming (not .IsClientStreaming) }}
-            // half duplex for {{.Name}}
+            // protobuf implementation : half duplex for {{.Name}}
             func (s *GRPCServer) {{.Name}}(req *pb.{{.InKind}}, stream pb.{{$service.Name}}_{{.Name}}Server) error {
                 reqNStream := &RequestAndStream{{.Name}}{  Request : req, Stream : stream }
 		        _,_,err := s.{{.Name}}GRPCHandler.ServeGRPC(stream.Context(), reqNStream)
 				return err
 		    }
         {{- else if and (not .IsServerStreaming) .IsClientStreaming }}
-            // reverse half duplex for {{.Name}}
+            // protobuf implementation : reverse half duplex for {{.Name}}
             func (s *GRPCServer) {{.Name}}(stream pb.{{ $serviceName }}_{{.Name}}Server) error {
 		        _,_,err := s.{{.Name}}GRPCHandler.ServeGRPC(stream.Context(), stream)
 				return err
 		    }      
-        {{- else if and (.IsServerStreaming) (.IsClientStreaming) }}
-            // full duplex for {{.Name}}
+        {{- else if and .IsServerStreaming .IsClientStreaming }}
+            // protobuf implementation : full duplex for {{.Name}}
             func (s *GRPCServer) {{.Name}}(stream pb.{{ $serviceName }}_{{.Name}}Server) error {
 		        _,_,err := s.{{.Name}}GRPCHandler.ServeGRPC(stream.Context(), stream)
 				return err

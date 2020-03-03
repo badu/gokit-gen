@@ -11,5 +11,6 @@ require (
 	github.com/rakyll/statik v0.1.6
 	github.com/stretchr/testify v1.4.0
 	golang.org/x/tools v0.0.0-20200213050514-49b8ac185c84
+	google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
 	google.golang.org/grpc v1.27.1
 )

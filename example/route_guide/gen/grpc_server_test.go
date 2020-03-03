@@ -36,9 +36,9 @@ func (r *MockedRepository) ReverseHalfDuplex(ctx context.Context, latitude int32
 	return 0, 0, 0, 0, errors.New("not implemented")
 }
 
-func (r *MockedRepository) FullDuplex(ctx context.Context, location *Point) (*Point, error) {
+func (r *MockedRepository) FullDuplex(ctx context.Context, location *Point, message string) (*Point, string, error) {
 	// TODO : implement me
-	return nil, errors.New("not implemented")
+	return nil, "", errors.New("not implemented")
 }
 
 const (
@@ -52,7 +52,7 @@ func generateJWTMeta() string {
 
 func TestMain(m *testing.M) {
 	serverLogger := log.NewLogfmtLogger(os.Stderr)
-	serverLogger = log.With(serverLogger, "caller", log.Caller(7))
+	serverLogger = log.With(serverLogger, "caller", log.DefaultCaller)
 	serverLogger = level.NewFilter(serverLogger, level.AllowDebug())
 
 	grpcService := NewService(serverLogger, &MockedRepository{})
@@ -111,7 +111,81 @@ func TestGRPCGetFeature(t *testing.T) {
 }
 
 // TODO : half duplex for HalfDuplex
+func TestGRPCHalfDuplex(t *testing.T) {
+	logger := log.NewLogfmtLogger(os.Stderr)
+	logger = log.With(logger, "caller", log.Caller(7))
+	logger = level.NewFilter(logger, level.AllowDebug())
+
+	conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+	if err != nil {
+		t.Fatalf("unable to Dial: %+v", err)
+	}
+
+	clientOptions := []kitGRPC.ClientOption{kitGRPC.ClientBefore(kitJWT.ContextToGRPC())}
+	client := NewClient(conn, logger, clientOptions...)
+
+	ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+	// TODO : load the payloads
+	name, location, err := client.HalfDuplex(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("unable to test: %+v", err)
+	}
+	// TODO : check response (write the actual test)
+
+	t.Logf("name : %v", name)
+	t.Logf("location : %v", location)
+}
 
 // TODO : reverse half duplex for ReverseHalfDuplex
+func TestGRPCReverseHalfDuplex(t *testing.T) {
+	logger := log.NewLogfmtLogger(os.Stderr)
+	logger = log.With(logger, "caller", log.Caller(7))
+	logger = level.NewFilter(logger, level.AllowDebug())
+
+	conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+	if err != nil {
+		t.Fatalf("unable to Dial: %+v", err)
+	}
+
+	clientOptions := []kitGRPC.ClientOption{kitGRPC.ClientBefore(kitJWT.ContextToGRPC())}
+	client := NewClient(conn, logger, clientOptions...)
+
+	ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+	// TODO : load the payloads
+	pointCount, featureCount, distance, elapsedTime, err := client.ReverseHalfDuplex(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("unable to test: %+v", err)
+	}
+	// TODO : check response (write the actual test)
+
+	t.Logf("pointCount : %v", pointCount)
+	t.Logf("featureCount : %v", featureCount)
+	t.Logf("distance : %v", distance)
+	t.Logf("elapsedTime : %v", elapsedTime)
+}
 
 // TODO : full duplex for FullDuplex
+func TestGRPCFullDuplex(t *testing.T) {
+	logger := log.NewLogfmtLogger(os.Stderr)
+	logger = log.With(logger, "caller", log.Caller(7))
+	logger = level.NewFilter(logger, level.AllowDebug())
+
+	conn, err := grpc.Dial(grpcHostAndPort, grpc.WithInsecure())
+	if err != nil {
+		t.Fatalf("unable to Dial: %+v", err)
+	}
+
+	clientOptions := []kitGRPC.ClientOption{kitGRPC.ClientBefore(kitJWT.ContextToGRPC())}
+	client := NewClient(conn, logger, clientOptions...)
+
+	ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+	// TODO : load the payloads
+	location, message, err := client.FullDuplex(ctx, nil, "")
+	if err != nil {
+		t.Fatalf("unable to test: %+v", err)
+	}
+	// TODO : check response (write the actual test)
+
+	t.Logf("location : %v", location)
+	t.Logf("message : %v", message)
+}

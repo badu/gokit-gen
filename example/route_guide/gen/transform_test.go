@@ -125,10 +125,12 @@ func TestRouteNoteFromPB(t *testing.T) {
 			Latitude:  0,
 			Longitude: 0,
 		},
+		Message: "",
 	}
 	result := NewRouteNoteFromPB(&payload)
 	assert.Equal(t, payload.Location.Latitude, result.Location.Latitude)
 	assert.Equal(t, payload.Location.Longitude, result.Location.Longitude)
+	assert.Equal(t, payload.Message, result.Message)
 
 }
 
@@ -141,10 +143,12 @@ func TestPBFromRouteNote(t *testing.T) {
 			Latitude:  0,
 			Longitude: 0,
 		},
+		Message: "",
 	}
 	result := NewPBFromRouteNote(&payload)
 	assert.Equal(t, payload.Location.Latitude, result.Location.Latitude)
 	assert.Equal(t, payload.Location.Longitude, result.Location.Longitude)
+	assert.Equal(t, payload.Message, result.Message)
 
 }
 
