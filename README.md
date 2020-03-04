@@ -1,12 +1,31 @@
 # gokit-gen
 
-Provide a .proto file, get a go-kit generated package, a boilerplate starting point to your microservices.
+Provide a .proto file, get a go-kit generated package, a boilerplate package for your microservices.
 
 Yes, you will have to complete a lot of details in tests, and, yes there is a lot to be improved in this project.
 
+It will generate:
+
+* `domain.go` - decoupling the Service from Transport layer
+* `endpoints.go` - two transports (HTTP and gRPC) have two methods of sending requests to the same endpoint
+* `grpc_client.go` - a GRPC client for the server - used for tests AND in other micro-services
+* `grpc_server.go` - the GRPC server
+* `http_client.go` - a HTTP client for the server - used for tests only
+* `http_server.go` - serving HTTP to the outside world
+* `repository.go` - a possible repository interface and implementation
+* `service.go` - the business logic holder - it's coupled to repository interface, just in case you need it
+* `transform.go` - all sort of transformers from `protobuf` to `domain objects` and back
+* some tests
+
+If you need streaming, it knows how to generate all three kinds :
+
+* half duplex - server streams, client make initial request
+* reverse half duplex - client streams, server speaks the final response
+* full duplex - both client and server are streaming away
+
 ## install
 
-`go get -u github.com/badu/gokit-gen`
+`go get -u github.com/badu/gokit-gen/cmd/gokit-gen`
 
 ## parameters
 
