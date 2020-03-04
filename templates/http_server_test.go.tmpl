@@ -1,0 +1,93 @@
+{{/* functions signature */}}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
+{{ define "returnSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{lowerFirst .PublicName}}, {{- end }} err{{ end }}
+{{ define "requestSignature" }}{{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.ZeroValue}}, {{- end }}{{ end }}
+{{- if usesHTTP }}{{- if ne (len .Services) 0}}
+package {{ projectName }}_test
+{{ $hasJWT := .Services.AnyOptionNamedValueEq "security" "jwt" }}
+import(
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"testing"
+	"time"
+	
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+	"github.com/go-kit/kit/transport"
+    "github.com/go-kit/kit/endpoint"
+	"github.com/stretchr/testify/assert"
+	
+    {{- if $hasJWT }}
+	"github.com/dgrijalva/jwt-go"
+	kitJWT "github.com/go-kit/kit/auth/jwt"
+    {{- end }}
+	kitHTTP "github.com/go-kit/kit/transport/http"
+    . "{{ goPkg }}"
+)
+
+type HTTPMockedRepository struct{}
+
+{{ range .Services}}
+    {{- range .Methods }}
+    func (r *HTTPMockedRepository) {{- template "funcSignature" . -}}{
+        // TODO : implement me
+        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} errors.New("repository not implemented")
+    }
+    {{ end }}
+{{- end }}
+
+{{- range $service := .Services }}
+    {{ $serviceName := .Name | upperFirst }}
+    {{- range $method := $service.Methods}}
+		{{- if .NoStreaming}}
+			// classic grpc call for {{.Name}}            
+			func TestHTTP{{.Name}}(t *testing.T){
+				logger := log.NewLogfmtLogger(os.Stdout)
+				logger = log.With(logger, "caller", log.Caller(4))
+				logger = level.NewFilter(logger, level.AllowDebug())
+				
+				service     := NewService(logger, &HTTPMockedRepository{})
+				//authMiddleware := MakeEnsureValidJWTMiddleware(logger)
+				endpoints 		:= MakeEndpoints(service, []endpoint.Middleware{}) // authMiddleware
+							
+				options := []kitHTTP.ServerOption{
+					kitHTTP.ServerErrorHandler(transport.NewLogErrorHandler(logger)),
+					{{- if $hasJWT }}
+						kitHTTP.ServerBefore(kitJWT.HTTPToContext()),
+						//kitHTTP.ServerBefore(MakeGRPCDecodeJWTToClaims(jwtSecret, jwt.SigningMethodHS256, logger)),
+					{{- end }}
+				}
+				server := httptest.NewServer(Make{{.Name}}HTTPHandler(endpoints.{{.Name}}Endpoint, logger, options...))
+				defer server.Close()
+				
+				{{ if $hasJWT }}
+					clientOptions := []kitHTTP.ClientOption{ kitHTTP.ClientBefore(kitJWT.ContextToGRPC()) }
+					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{ else }}
+					ctx := context.Background()
+					var clientOptions []kitHTTP.ClientOption
+				{{- end }}
+				
+				client,err := NewHTTPClient(server.URL, logger, clientOptions...)
+				if err!=nil{
+					t.Fatalf("error : %v",err)
+				}
+				// TODO : load the payloads
+				{{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
+				if err != nil {
+					t.Fatalf("unable to test: %+v", err)
+				}
+				// TODO : check response (write the actual test)         
+				{{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}  
+				t.Logf("{{lowerFirst .PublicName}} : %v", {{lowerFirst .PublicName}}) 
+				{{- end }}          
+			}
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+{{- end }}{{/* we have service */}}
+{{- end }}{{/* uses HTTP */}}

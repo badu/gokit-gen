@@ -58,11 +58,14 @@ func (c *grpcClient) Log() log.Logger {
 	return c.log
 }
 
+{{ if hasStreaming }}
 func (c *grpcClient) ApplyExtraOptions(options ...ClientOption) {
 	for _, option := range options {
 		option(c)
 	}
 }
+{{ end }}
+
 {{- range $service := .Services }}
     {{- range $method := $service.Methods}}
         {{- if and .IsServerStreaming (not .IsClientStreaming) }}
@@ -101,7 +104,7 @@ func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.Clie
                 directClient: pb.New{{$service.Name}}Client(conn),
             {{- end }} 
             {{- range $method := $service.Methods}}
-                {{- if and $method.NoStreaming}}	
+                {{- if .NoStreaming}}
                     {{.Name }}Endpoint : kitGRPC.NewClient(
 						conn,
 						"{{ pb_package }}.{{ $serviceName }}",
@@ -129,7 +132,7 @@ func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.Clie
 {{- range $service := .Services }}
     {{ $serviceName := .Name | upperFirst }}
     {{- range $method := $service.Methods}}            
-        {{ if and $method.NoStreaming}}            
+        {{ if .NoStreaming}}
             func encode{{.Name}}GRPCRequest(logger log.Logger) func(context.Context, interface{})(interface{},error){
                 return func(ctx context.Context, req interface{}) (interface{}, error) {
                     pbReq, ok := req.(*{{.InKind}})

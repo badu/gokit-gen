@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package pb;
 
+option go_package = "github.com/badu/gokit-gen/example/poc/pb";
+
 service Streams {
 	rpc HalfDuplex (Request) returns (stream Reply) {}
 	rpc FullDuplex (stream Request) returns (stream Reply) {}

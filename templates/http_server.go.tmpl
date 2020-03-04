@@ -1,0 +1,75 @@
+{{- if usesHTTP }}{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "context"
+	"fmt"
+    "net/http"
+	"encoding/json"
+		
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/log/level"
+    "github.com/gorilla/mux"
+
+    pb "{{ go_package }}"
+    "github.com/go-kit/kit/endpoint"
+    kitHTTP "github.com/go-kit/kit/transport/http"
+)
+
+{{- range $service := .Services }}
+    {{- range $method := $service.Methods }}
+        {{ if $method.NoStreaming }}
+           func Make{{.Name}}HTTPHandler(ep endpoint.Endpoint, logger log.Logger, options...kitHTTP.ServerOption) *kitHTTP.Server {
+                return kitHTTP.NewServer(
+                    ep,
+                    decode{{.Name}}HTTPRequest(logger),
+                    encode{{.Name}}HTTPResponse(logger),
+                    options...,
+                )
+            }
+
+            func decode{{.Name}}HTTPRequest(logger log.Logger) func(context.Context, *http.Request) (interface{}, error){
+                return func(ctx context.Context, r *http.Request) (interface{}, error) {
+                    var request pb.{{.InKind}}
+                    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+                        level.Debug(logger).Log("json_decode_error",err)
+                        return nil, err
+                    }
+                    return New{{.InKind}}FromPB(&request), nil
+                }
+            }
+
+            func encode{{.Name}}HTTPResponse(logger log.Logger) func(ctx context.Context, w http.ResponseWriter, response interface{}) error{
+                return func(ctx context.Context, w http.ResponseWriter, resp interface{}) error{
+                    result, ok := resp.(*{{.OutKind}})
+                    if !ok{
+                        err :=  fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
+                        level.Error(logger).Log("encode{{.Name}}HTTPResponse",err)
+                        return err
+                    }
+                    payload := NewPBFrom{{.OutKind}}(result)
+                    return json.NewEncoder(w).Encode(payload)
+                }
+            }
+        {{- end }} 
+    {{- end}}
+{{- end }}
+
+{{- range $service := .Services }}
+    {{ $serviceName := .Name | upperFirst }}
+    func RegisterHandlers(router *mux.Router, endpoints Endpoints, logger log.Logger, options...kitHTTP.ServerOption) {
+    {{- range $method := $service.Methods}}
+        {{- if $method.NoStreaming}}
+            {{ $route := .GetHTTPRoute -}}
+            // {{.Name}}
+            router.Methods({{.GetHTTPVerb}}).Path("{{$route}}").Handler(Make{{.Name}}HTTPHandler(endpoints.{{.Name}}Endpoint, logger, options...))
+            router.Methods(http.MethodOptions).Path( "{{$route}}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                w.WriteHeader(http.StatusOK)// CORS Options
+            })        
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+    }
+{{- end }} {{/* range services */}}
+
+{{- end }}{{/* we have service */}}
+{{- end }}{{/* uses HTTP */}}

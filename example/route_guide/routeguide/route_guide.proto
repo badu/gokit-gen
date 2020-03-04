@@ -27,14 +27,6 @@ extend google.protobuf.MethodOptions {
 	string security = 50001;
 }
 
-extend google.protobuf.MethodOptions {
-	string http_verb = 50002;
-}
-
-extend google.protobuf.MethodOptions {
-	string http_route = 50003;
-}
-
 // Interface exported by the server.
 service RouteGuide {
 	// A simple RPC.
@@ -44,8 +36,6 @@ service RouteGuide {
 	// A feature with an empty name is returned if there's no feature at the given
 	// position.
 	rpc GetFeature (Point) returns (Feature) {
-		option (http_verb) = "get";
-		option (http_route) = "/feature";
 		option (security) = "jwt";
 	}
 

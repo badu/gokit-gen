@@ -443,6 +443,14 @@ out:
 			}
 			return nil, errors.New("message " + kind + " not found")
 		},
+		"usesHTTP": func() bool {
+			for _, imp := range result.Imports {
+				if imp == "google/api/annotations.proto" {
+					return true
+				}
+			}
+			return false
+		},
 	}
 
 	for _, tpl := range templates {

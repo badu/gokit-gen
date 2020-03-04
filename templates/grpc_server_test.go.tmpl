@@ -28,11 +28,11 @@ import(
     . "{{ goPkg }}"
 )
 
-type MockedRepository struct{}
+type GRPCMockedRepository struct{}
 
 {{ range .Services}}
     {{- range .Methods }}
-    func (r *MockedRepository) {{- template "funcSignature" . -}}{
+    func (r *GRPCMockedRepository) {{- template "funcSignature" . -}}{
         // TODO : implement me
         return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} errors.New("repository not implemented")
     }
@@ -51,14 +51,14 @@ func generateJWTMeta() string {
 {{- range $service := .Services }}
     {{ $serviceName := .Name | upperFirst }}
     {{- range $method := $service.Methods}}
-		{{- if and $method.NoStreaming}}
+		{{- if .NoStreaming}}
 			// classic grpc call for {{.Name}}            
 			func TestGRPC{{.Name}}(t *testing.T){
 				logger := log.NewLogfmtLogger(os.Stdout)
 				logger = log.With(logger, "caller", log.Caller(4))
 				logger = level.NewFilter(logger, level.AllowDebug())
 				
-				grpcService     := NewService(logger, &MockedRepository{})
+				grpcService     := NewService(logger, &GRPCMockedRepository{})
 				//authMiddleware := MakeEnsureValidJWTMiddleware(logger)
 				endpoints 		:= MakeEndpoints(grpcService, []endpoint.Middleware{})//authMiddleware
 				grpcServer      := grpc.NewServer()
@@ -105,6 +105,8 @@ func generateJWTMeta() string {
 				
 				{{ if .Options.NamedValueEq "security" "jwt" }}
 					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{ else }}
+					ctx := context.Background()
 				{{- end }}
 				// TODO : load the payloads
 				{{ template "returnSignature" . }} := client.{{.Name}}(ctx, {{- template "requestSignature" . }} )
@@ -123,7 +125,7 @@ func generateJWTMeta() string {
 				logger = log.With(logger, "caller", log.Caller(4))
 				logger = level.NewFilter(logger, level.AllowDebug())
 				
-				grpcService     := NewService(logger, &MockedRepository{})
+				grpcService     := NewService(logger, &GRPCMockedRepository{})
 				//authMiddleware := MakeEnsureValidJWTMiddleware(logger)
 				endpoints 		:= MakeEndpoints(grpcService, []endpoint.Middleware{})//authMiddleware
 				grpcServer      := grpc.NewServer()
@@ -170,6 +172,8 @@ func generateJWTMeta() string {
 				
 				{{ if .Options.NamedValueEq "security" "jwt" }}
 					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{ else }}
+					ctx := context.Background()
 				{{- end }}
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
@@ -210,7 +214,7 @@ func generateJWTMeta() string {
 				}()
 				logger.Log("client","placing call to {{.Name}}")
 				// TODO : load the payloads
-				err = client.Call{{.Name}}(ctx, {{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{- $subMessage := messageByKind .Kind -}}&{{.Kind}} { {{- range $subMessage.Fields }}{{.PublicName}}:{{.ZeroValue}},{{ end }} },  {{- end }} )
+				err = client.Call{{.Name}}(ctx, {{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{- if not .IsBasic}}{{- $subMessage := messageByKind .Kind -}}&{{.Kind}} { {{- range $subMessage.Fields }}{{.PublicName}}:{{.ZeroValue}},{{ end }} }, {{ end }} {{- end }} )
 				if err != nil && err.Error() != "rpc error: code = Canceled desc = context canceled" {
 					t.Fatalf("unable to test: %+v", err)
 				}		     
@@ -223,7 +227,7 @@ func generateJWTMeta() string {
 				logger = log.With(logger, "caller", log.Caller(4))
 				logger = level.NewFilter(logger, level.AllowDebug())
 				
-				grpcService     := NewService(logger, &MockedRepository{})
+				grpcService     := NewService(logger, &GRPCMockedRepository{})
 				//authMiddleware := MakeEnsureValidJWTMiddleware(logger)
 				endpoints 		:= MakeEndpoints(grpcService, []endpoint.Middleware{})//authMiddleware
 				grpcServer      := grpc.NewServer()
@@ -270,6 +274,8 @@ func generateJWTMeta() string {
 				
 				{{ if .Options.NamedValueEq "security" "jwt" }}
 					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{ else }}
+					ctx := context.Background()
 				{{- end }}
 				// simulate broadcasting messages
 				go func(){				
@@ -308,7 +314,7 @@ func generateJWTMeta() string {
 				logger = log.With(logger, "caller", log.Caller(4))
 				logger = level.NewFilter(logger, level.AllowDebug())
 				
-				grpcService     := NewService(logger, &MockedRepository{})
+				grpcService     := NewService(logger, &GRPCMockedRepository{})
 				//authMiddleware := MakeEnsureValidJWTMiddleware(logger)
 				endpoints 		:= MakeEndpoints(grpcService, []endpoint.Middleware{})//authMiddleware
 				grpcServer      := grpc.NewServer()
@@ -355,6 +361,8 @@ func generateJWTMeta() string {
 				
 				{{ if .Options.NamedValueEq "security" "jwt" }}
 					ctx := context.WithValue(context.Background(), kitJWT.JWTTokenContextKey, generateJWTMeta())
+				{{ else }}
+					ctx := context.Background()
 				{{- end }}
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)

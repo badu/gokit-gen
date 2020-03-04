@@ -55,7 +55,11 @@ import(
                 }
             } 
         {{- else if .IsBasic  }}
+            {{- if .IsTimestamp }}
+            result.{{ .PublicName }} = *msg.{{ .PublicName }}
+            {{- else }}
             result.{{ .PublicName }} = msg.{{ .PublicName }}
+            {{- end }}
         {{- else if .IsOneOf }} 
             // TODO one of {{ .PublicName }}
         {{- else if .IsMap }}
@@ -86,7 +90,11 @@ func NewPBFrom{{ .Name | upperFirst }} (msg *{{.Name}}) *pb.{{.Name}} {
                 }
             } 
         {{- else if .IsBasic }}
-            result.{{ .PublicName }} = msg.{{ .PublicName }} 
+            {{- if .IsTimestamp }}
+            result.{{ .PublicName }} = &msg.{{ .PublicName }}
+            {{- else }}
+            result.{{ .PublicName }} = msg.{{ .PublicName }}
+            {{- end }} 
         {{- else if .IsOneOf }} 
             // TODO one of {{ .PublicName }}
         {{- else if .IsMap }}

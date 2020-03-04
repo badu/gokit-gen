@@ -44,6 +44,7 @@ func (s Services) AnyOptionNamedValueEq(name, value string) bool {
 	}
 	return false
 }
+
 func (s Services) HasOptionNamed(name string) bool {
 	for _, svc := range s {
 		for _, meth := range svc.Methods {
@@ -66,6 +67,42 @@ type Method struct {
 
 func (m *Method) NoStreaming() bool {
 	return !m.IsServerStreaming && !m.IsClientStreaming
+}
+
+func (m *Method) GetHTTPVerb() string {
+	for _, opt := range m.Options {
+		if opt.Name == "google.api.http" {
+			for _, val := range opt.Values {
+				switch val.Key {
+				case "get":
+					return "http.MethodGet"
+				case "put":
+					return "http.MethodPut"
+				case "delete":
+					return "http.MethodDelete"
+				case "post":
+					return "http.MethodPost"
+				case "patch":
+					return "http.MethodPatch"
+				}
+			}
+		}
+	}
+	return "UNSPECIFIED"
+}
+
+func (m *Method) GetHTTPRoute() string {
+	for _, opt := range m.Options {
+		if opt.Name == "google.api.http" {
+			for _, val := range opt.Values {
+				switch val.Key {
+				case "get", "put", "delete", "post", "patch":
+					return val.Value
+				}
+			}
+		}
+	}
+	return "UNSPECIFIED"
 }
 
 type Message struct {
@@ -119,7 +156,7 @@ func (coll Fields) L() error {
 
 func (f *Field) IsBasic() bool {
 	switch f.Kind {
-	case "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32", "sfixed64", "sint32", "sint64", "string", "uint32", "uint64":
+	case "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32", "sfixed64", "sint32", "sint64", "string", "uint32", "uint64", "google.protobuf.Timestamp":
 		return true
 	}
 	return false
@@ -157,6 +194,8 @@ func getKind(kind string) string {
 		return "uint32"
 	case "uint64":
 		return "uint64"
+	case "google.protobuf.Timestamp":
+		return "timestamp.Timestamp"
 	}
 	return kind
 }
@@ -195,6 +234,8 @@ func (f *Field) GoKind() string {
 		return "uint32"
 	case "uint64":
 		return "uint64"
+	case "google.protobuf.Timestamp":
+		return "timestamp.Timestamp"
 	}
 	return f.Kind
 }
@@ -233,6 +274,8 @@ func (f *Field) ZeroValue() string {
 		return "0"
 	case "uint64":
 		return "0"
+	case "google.protobuf.Timestamp":
+		return "&timestamp.Timestamp{}"
 	}
 	return "nil"
 }
@@ -250,10 +293,13 @@ func (f *Field) PublicName() string {
 		}
 		return name
 	}
-	return strings.ToUpper(f.Name[:1]) + strings.ToLower(f.Name[1:])
+	return strings.ToUpper(f.Name[:1]) + f.Name[1:]
 }
 
 func (f *Field) IsTimestamp() bool {
+	if f.Kind == "google.protobuf.Timestamp" {
+		return true
+	}
 	return false
 }
 

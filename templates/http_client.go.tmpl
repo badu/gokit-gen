@@ -1,0 +1,122 @@
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
+{{ define "requestSignature" }}{{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }}{{ end }}
+{{ define "responseSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }}{{ end }}
+{{- if usesHTTP }}{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "context"
+	"fmt"
+	"net/url"
+
+    "google.golang.org/grpc"
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/log/level"
+    "github.com/go-kit/kit/endpoint"
+
+    pb "{{ go_package }}"
+    kitHTTP "github.com/go-kit/kit/transport/http"
+)
+
+type httpClient struct{
+	log log.Logger
+    {{- range $service := .Services }}
+        {{- range $method := $service.Methods}}
+            {{- if .NoStreaming }}
+                {{.Name}}Endpoint endpoint.Endpoint
+            {{- end}} {{/* streaming ifs*/}}
+        {{- end}} {{/* range Method */}}
+    {{- end }} {{/* range services */}}
+}
+
+func (c *httpClient) Log() log.Logger {
+	return c.log
+}
+
+{{/* service interface implementation */}}
+{{- range .Services }}
+    {{- range .Methods}}            
+        {{ if .NoStreaming}}            
+            func (c *httpClient) {{ template "funcSignature" . }} {
+                resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{ template "requestSignature" . }} })
+                if err != nil {
+                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
+                }
+                domResp, ok := resp.(*{{.OutKind}})
+                if !ok{
+                    err := fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
+                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
+                } 
+                return {{ template "responseSignature" . }} nil
+            }   
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+func NewHTTPClient(serverAddr string, logger log.Logger, options ...kitHTTP.ClientOption) (Service,error) {
+	{{- range .Services }}
+            {{- range .Methods}}
+                {{- if .NoStreaming}}
+                    url{{.Name}}, err := url.Parse(serverAddr+"{{ .GetHTTPRoute }}")
+                    if err!=nil{
+                        return nil,err
+                    }
+                {{- end }}{{/* if-else no streaming */}}
+            {{- end }}{{/* range Method */}}
+        {{- end }} {{/* range services */}}
+    result := &httpClient{
+		log:logger,        
+        {{- range .Services }}
+            {{- range .Methods}}
+                {{- if .NoStreaming}}
+                    {{.Name }}Endpoint : kitHTTP.NewClient(
+						{{ .GetHTTPVerb }},
+						url{{.Name}},
+						encode{{.Name}}HTTPRequest(logger),
+						decode{{.Name}}HTTPResponse(logger),
+						options...,
+					).Endpoint(),
+                {{- end }}{{/* if-else no streaming */}}
+            {{- end }}{{/* range Method */}}
+        {{- end }} {{/* range services */}}
+	}
+    return result,nil
+}
+{{/* service interface implementation */}}
+{{- range .Services }}
+    {{- range .Methods}}            
+        {{ if .NoStreaming}}            
+            func encode{{.Name}}HTTPRequest(logger log.Logger) func(context.Context,*http.Request,interface{}) error{
+                return func(ctx context.Context, req *http.Request, request interface{}) error {
+                    req.URL.Path = "{{.GetHTTPRoute}}"
+                    var buf bytes.Buffer                    
+                    if err := json.NewEncoder(&buf).Encode(request);err != nil {
+                         level.Error(logger).Log("encode{{.Name}}HTTPRequest",err)
+                        return err
+                    }
+                    req.Body = ioutil.NopCloser(&buf)
+                    return nil
+                }
+            }
+
+            func decode{{.Name}}HTTPResponse(logger log.Logger) func(context.Context, *http.Response)(interface{},error){
+                return func(ctx context.Context, resp *http.Response) (interface{}, error) {
+                    if resp.StatusCode != http.StatusOK {
+                        defer resp.Body.Close()
+                        body, _ := ioutil.ReadAll(resp.Body)
+                        return nil, errors.New(string(body))
+                    }		
+                    var response *pb.{{.OutKind}}                    
+                    if err := json.NewDecoder(resp.Body).Decode(&response);err!=nil{
+                        level.Error(logger).Log("decode{{.Name}}HTTPResponse",err)
+                        return nil, err
+                    }
+                    return New{{.OutKind}}FromPB(response), nil
+                }
+            }
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+
+{{- end }}{{/* we have service */}}
+{{- end }}{{/* uses HTTP */}}

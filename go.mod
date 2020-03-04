@@ -8,6 +8,7 @@ require (
 	github.com/go-kit/kit v0.10.0
 	github.com/golang/mock v1.4.1
 	github.com/golang/protobuf v1.3.4
+	github.com/gorilla/mux v1.7.3
 	github.com/rakyll/statik v0.1.6
 	github.com/stretchr/testify v1.4.0
 	golang.org/x/tools v0.0.0-20200213050514-49b8ac185c84
