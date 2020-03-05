@@ -10,7 +10,8 @@ import(
 {{/* recurse zeroes */}}
 {{ define "recurseZeroes" }}
 {{- range .Fields }}
-    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
+    {{- $fieldIsEnum := isEnumField . -}}
+    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved $fieldIsEnum }}
         {{ .PublicName }} : {{ .ZeroValue }}, 
     {{- else if .IsRepeated }}
         // repeated {{.PublicName}},
@@ -25,7 +26,8 @@ import(
 
 {{ define "recurseZeroesPB" }}
 {{- range .Fields }}
-    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
+    {{- $fieldIsEnum := isEnumField . -}}
+    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved $fieldIsEnum }}
         {{ .PublicName }} : {{ .ZeroValue }}, 
     {{- else if .IsRepeated }}
         // repeated {{.PublicName}},
@@ -33,7 +35,7 @@ import(
         {{- $message := messageByKind .Kind -}}
         {{ .PublicName }} : &pb.{{ $message.Name }}{
              {{ template "recurseZeroesPB" $message }}
-        },          
+        },                 
     {{- end }}
 {{- end }}
 {{ end }}

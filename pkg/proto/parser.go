@@ -24,6 +24,7 @@ type Proto struct {
 	Services    Services
 	Enums       []Enum
 	Error       *ErrNode
+	EnumsMap    map[string]string
 }
 
 type Service struct {
@@ -751,9 +752,15 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 
 	msgEnums := makeEnums(declCtx.AllEnum(), result.Name)
 	enumsMap := make(map[string]string)
-	for _, enum := range msgEnums {
-		enumsMap[enum.Name] = enum.ParentName + enum.Name
+	// load previously known enums
+	for k, v := range proto.EnumsMap {
+		enumsMap[v] = k
 	}
+	for _, enum := range msgEnums {
+		proto.EnumsMap[enum.ParentName+"."+enum.Name] = enum.Name
+		enumsMap[enum.Name] = enum.ParentName + "." + enum.Name
+	}
+
 	result.Enums = append(result.Enums, msgEnums...)
 	proto.Enums = append(proto.Enums, msgEnums...)
 
@@ -780,14 +787,6 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 		if len(oneOfFields) > 0 {
 			result.Fields = append(result.Fields, Field{Name: fieldName, IsOneOf: true, OneOf: oneOfFields})
 		}
-	}
-	return result
-}
-
-func makeNameAndKinds(idents []antlr.TerminalNode) Fields {
-	var result Fields
-	for _, id := range idents {
-		result = append(result, Field{Kind: id.GetText()})
 	}
 	return result
 }

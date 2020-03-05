@@ -1,4 +1,4 @@
-{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
 {{ define "requestSignature" }}{{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }}{{ end }}
 {{ define "responseSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }}{{ end }}
 {{- if ne (len .Services) 0}}
@@ -156,8 +156,16 @@ func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.Clie
                     return New{{.OutKind}}FromPB(domResp), nil
                 }
             }
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
 
-            func (c *grpcClient) {{ template "funcSignature" . }} {
+{{/* service interface implementation */}}
+{{- range $service := .Services }}
+    {{ $serviceName := .Name | upperFirst }}
+    {{- range $method := $service.Methods}}            
+        {{ if .NoStreaming}}
+           func (c *grpcClient) {{ template "funcSignature" . }} {
                 resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{ template "requestSignature" . }} })
                 if err != nil {
                     return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
@@ -194,7 +202,7 @@ func NewClient(conn *grpc.ClientConn, logger log.Logger, options ...kitGRPC.Clie
     {{- range $method := $service.Methods}}            
         {{- if and .IsServerStreaming (not .IsClientStreaming) }}
             // usable : implementation of direct client for {{ .Name }} - half duplex
-            func (c *grpcClient) Call{{ .Name }}(extCtx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}) error {
+            func (c *grpcClient) Call{{ .Name }}(extCtx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}) error {
                 var err error
                 ctx, cancel := context.WithCancel(extCtx)
 

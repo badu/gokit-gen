@@ -1,6 +1,3 @@
-{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.Kind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
-{{ define "requestSignature" }}{{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }}{{ end }}
-{{ define "responseSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }}{{ end }}
 {{- if usesHTTP }}{{- if ne (len .Services) 0}}
 package {{ projectName }}
 
@@ -37,8 +34,8 @@ func (c *httpClient) Log() log.Logger {
 {{- range .Services }}
     {{- range .Methods}}            
         {{ if .NoStreaming}}            
-            func (c *httpClient) {{ template "funcSignature" . }} {
-                resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{ template "requestSignature" . }} })
+            func (c *httpClient) {{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error) {
+                resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }} })
                 if err != nil {
                     return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
                 }
@@ -47,7 +44,7 @@ func (c *httpClient) Log() log.Logger {
                     err := fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
                     return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
                 } 
-                return {{ template "responseSignature" . }} nil
+                return {{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }} nil
             }   
         {{- end }} {{/* streaming ifs*/}}
     {{ end }} {{/* range Method */}}
@@ -117,6 +114,4 @@ func NewHTTPClient(serverAddr string, logger log.Logger, options ...kitHTTP.Clie
         {{- end }} {{/* streaming ifs*/}}
     {{ end }} {{/* range Method */}}
 {{- end }} {{/* range services */}}
-
-{{- end }}{{/* we have service */}}
-{{- end }}{{/* uses HTTP */}}
+{{- end }}{{/* we have service */}}{{- end }}{{/* uses HTTP */}}

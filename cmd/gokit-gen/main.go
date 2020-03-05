@@ -9,6 +9,7 @@ import (
 	"github.com/badu/gokit-gen/pkg/parser"
 	"github.com/badu/gokit-gen/pkg/proto"
 	_ "github.com/badu/gokit-gen/statik"
+	"github.com/badu/stroo/halp"
 	"github.com/rakyll/statik/fs"
 	"go/format"
 	"golang.org/x/tools/imports"
@@ -89,6 +90,7 @@ func parseProto(wd, src string) (*proto.Proto, error) {
 	p.RemoveErrorListeners()
 
 	var listener proto.ProtoListener
+	listener.Proto.EnumsMap = make(map[string]string)
 	// add our own error listener
 	p.AddErrorListener(&proto.ErrorListener{Listener: &listener})
 
@@ -123,6 +125,7 @@ func loadSharedProto(wd, src string, pro *proto.Proto) error {
 	p.RemoveErrorListeners()
 
 	var listener proto.ProtoListener
+	listener.Proto.EnumsMap = make(map[string]string)
 	// add our own error listener
 	p.AddErrorListener(&proto.ErrorListener{Listener: &listener})
 
@@ -140,6 +143,13 @@ func loadSharedProto(wd, src string, pro *proto.Proto) error {
 			continue
 		}
 		pro.Options = append(pro.Options, opt)
+	}
+	for k, v := range listener.Proto.EnumsMap {
+		if val, has := pro.EnumsMap[k]; has {
+			log.Printf("Enum %s [%s] already acknoledged", k, val)
+			continue
+		}
+		pro.EnumsMap[k] = v
 	}
 
 	pro.Services = append(pro.Services, listener.Proto.Services...)
@@ -221,22 +231,25 @@ func buildContent(statikFS http.FileSystem, templateDir, templateFilename string
 	// generate the content
 	buffer := new(bytes.Buffer)
 	if err := tmpl.Execute(buffer, prt); err != nil {
-		return nil, err
-	}
-	// optimize imports
-	optImports, err := imports.Process("", buffer.Bytes(), nil)
-	if err != nil {
 		return buffer.Bytes(), err
 	}
+	if buffer.Len() > 0 {
+		// optimize imports
+		optImports, err := imports.Process("", buffer.Bytes(), nil)
+		if err != nil {
+			return buffer.Bytes(), err
+		}
 
-	// format file
-	formatted, err := format.Source(optImports)
-	if err != nil {
-		return optImports, err
+		// format file
+		formatted, err := format.Source(optImports)
+		if err != nil {
+			return optImports, err
 
+		}
+		//log.Printf("%q ok", templateFilename)
+		return formatted, nil
 	}
-	//log.Printf("%q ok", templateFilename)
-	return formatted, nil
+	return nil, nil
 }
 
 func run(args []string, stdout io.Writer) error {
@@ -292,6 +305,7 @@ func run(args []string, stdout io.Writer) error {
 	fname := filepath.Base(args[1])
 	fdir := filepath.Dir(args[1]) + "/"
 	var result *proto.Proto
+
 	if result, err = parseProto(wd, args[1]); err != nil {
 		return err
 	}
@@ -316,11 +330,6 @@ func run(args []string, stdout io.Writer) error {
 		}
 	}
 
-	var enumNamesMap = make(map[string]struct{})
-	// make enum names map
-	for _, enum := range result.Enums {
-		enumNamesMap[enum.PublicName()] = struct{}{}
-	}
 	// check has streaming
 	hasStreaming := false
 	for _, svc := range result.Services {
@@ -422,7 +431,7 @@ out:
 			return deployTo
 		},
 		"isEnumField": func(field *proto.Field) bool {
-			_, has := enumNamesMap[field.Kind]
+			_, has := result.EnumsMap[field.Kind]
 			return has
 		},
 		"hasStreaming": func() bool {
@@ -435,6 +444,23 @@ out:
 			return result.PackageName
 		},
 		"messageByKind": func(kind string) (*proto.Message, error) {
+			if strings.Contains(kind, ".") {
+				sk := strings.Split(kind, ".")
+				if len(sk) == 2 {
+					for _, message := range result.Messages {
+						if message.Name == sk[0] {
+							for _, submessage := range message.Messages {
+								if submessage.Name == sk[1] {
+									return &submessage, nil
+								}
+							}
+							return nil, errors.New("message " + kind + " not found")
+						}
+					}
+					return nil, errors.New("message " + kind + " not found")
+				}
+				return nil, errors.New("message " + kind + " not found")
+			}
 			for _, message := range result.Messages {
 				if message.Name == kind {
 					return &message, nil
@@ -450,23 +476,23 @@ out:
 			}
 			return false
 		},
+		"dump": func(target interface{}) string {
+			return halp.SPrint(target)
+		},
 	}
 
 	for _, tpl := range templates {
 		content, err := buildContent(statikFS, templateDir, tpl, funcMap, result)
-		if err != nil {
-			log.Printf("error processing %q : %v", tpl, err)
-			if len(content) > 0 {
-				log.Printf("partial result : %s", string(content))
+		if len(content) == 0 {
+			if err != nil {
+				log.Printf("error processing %q : %v", tpl, err)
 			}
-			//continue
+			continue
 		}
+
 		if !debug {
-			if len(content) == 0 {
-				continue
-			}
 			tpl = strings.Replace(tpl, ".tmpl", "", -1)
-			log.Printf("writing %q into %q", filepath.Base(tpl), deployTo)
+			log.Printf("writing %s into %s", filepath.Base(tpl), deployTo)
 			srcFile, err := os.Create(deployTo + filepath.Base(tpl))
 			if err != nil {
 				log.Printf("error creating file : %v", err)
