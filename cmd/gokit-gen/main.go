@@ -283,7 +283,6 @@ func run(args []string, stdout io.Writer) error {
 				return err
 			}
 			if path != "/" {
-				log.Printf("adding %q", path)
 				templates = append(templates, path)
 			}
 			return nil
@@ -467,6 +466,7 @@ out:
 				continue
 			}
 			tpl = strings.Replace(tpl, ".tmpl", "", -1)
+			log.Printf("writing %q into %q", filepath.Base(tpl), deployTo)
 			srcFile, err := os.Create(deployTo + filepath.Base(tpl))
 			if err != nil {
 				log.Printf("error creating file : %v", err)
