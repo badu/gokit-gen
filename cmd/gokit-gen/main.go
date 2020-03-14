@@ -258,6 +258,7 @@ func buildContent(statikFS http.FileSystem, templateDir, templateFilename string
 func run(args []string, stdout io.Writer) error {
 	var err error
 	if len(args) < 4 {
+		log.Print("GoKitGen Version 0.0.2")
 		log.Print("Usage")
 		fmt.Fprint(stdout, "Usage: \n gokit-gen <protofile.proto> <templates_folder> <target_package_path> [optional <output_folder>] \n"+
 			"<protofile> can be a relative path\n"+
