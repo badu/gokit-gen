@@ -104,14 +104,14 @@ func parseProto(wd, src string) (*proto.Proto, error) {
 	return &listener.Proto, nil
 }
 
-func loadSharedProto(wd, src string, pro *proto.Proto) error {
+func loadSharedProto(wd, src string, pro *proto.Proto) (*proto.Proto, error) {
 	var (
 		protoFileContent []byte
 		err              error
 	)
 	// load the file (with checks)
 	if protoFileContent, err = loadProtoFile(wd, src); err != nil {
-		return err
+		return nil, err
 	}
 
 	is := antlr.NewInputStream(string(protoFileContent))
@@ -126,6 +126,7 @@ func loadSharedProto(wd, src string, pro *proto.Proto) error {
 
 	var listener proto.ProtoListener
 	listener.Proto.EnumsMap = make(map[string]string)
+	listener.Proto.IsShared = true
 	// add our own error listener
 	p.AddErrorListener(&proto.ErrorListener{Listener: &listener})
 
@@ -133,10 +134,9 @@ func loadSharedProto(wd, src string, pro *proto.Proto) error {
 	antlr.ParseTreeWalkerDefault.Walk(&listener, p.Proto())
 
 	if listener.Proto.Error != nil {
-		return fmt.Errorf("%s", listener.Proto.Error.Text)
+		return nil, fmt.Errorf("%s", listener.Proto.Error.Text)
 	}
-	pro.Enums = append(pro.Enums, listener.Proto.Enums...)
-	pro.Messages = append(pro.Messages, listener.Proto.Messages...)
+
 	for _, opt := range listener.Proto.Options {
 		// skip Go package option
 		if opt.Name == "go_package" {
@@ -144,6 +144,7 @@ func loadSharedProto(wd, src string, pro *proto.Proto) error {
 		}
 		pro.Options = append(pro.Options, opt)
 	}
+
 	for k, v := range listener.Proto.EnumsMap {
 		if val, has := pro.EnumsMap[k]; has {
 			log.Printf("Enum %s [%s] already acknoledged", k, val)
@@ -152,8 +153,10 @@ func loadSharedProto(wd, src string, pro *proto.Proto) error {
 		pro.EnumsMap[k] = v
 	}
 
+	pro.Enums = append(pro.Enums, listener.Proto.Enums...)
+	pro.Messages = append(pro.Messages, listener.Proto.Messages...)
 	pro.Services = append(pro.Services, listener.Proto.Services...)
-	return nil
+	return &listener.Proto, nil
 }
 
 func templateFileNames(templateDir string) ([]string, error) {
@@ -309,12 +312,24 @@ func run(args []string, stdout io.Writer) error {
 	if result, err = parseProto(wd, args[1]); err != nil {
 		return err
 	}
+	sharedImports := make(map[string]string)
 	for _, imp := range result.Imports {
 		if filepath.Base(imp) == imp {
-			log.Printf("import from the same folder : %q", imp)
-			err := loadSharedProto(fdir, imp, result)
+			sharedProto, err := loadSharedProto(fdir, imp, result)
 			if err != nil {
 				return err
+			}
+			sharedGoPackage := ""
+			for _, opt := range sharedProto.Options {
+				if opt.Name == "go_package" {
+					sharedGoPackage = opt.Value
+					break
+				}
+			}
+			if sharedGoPackage != "" {
+				sharedImports[sharedProto.PackageName] = sharedGoPackage
+			} else {
+				log.Printf("could not load go package of shared protobuf %q", imp)
 			}
 		}
 	}
@@ -402,7 +417,13 @@ out:
 			return strings.ToUpper(s[:1]) + s[1:]
 		},
 		"lowerFirst": func(s string) string {
-			return strings.ToLower(s[:1]) + s[1:]
+			result := strings.ToLower(s[:1]) + s[1:]
+			for _, keyword := range []string{"break", "default", "func", "interface", "select", "case", "defer", "go", "map", "struct", "chan", "else", "goto", "package", "switch", "const", "fallthrough", "if", "range", "type", "continue", "for", "import", "return", "var"} {
+				if keyword == result {
+					return "_" + result
+				}
+			}
+			return result
 		},
 		"contains": func(sub, s string) bool {
 			return strings.Contains(s, sub)
@@ -446,7 +467,8 @@ out:
 		"messageByKind": func(kind string) (*proto.Message, error) {
 			if strings.Contains(kind, ".") {
 				sk := strings.Split(kind, ".")
-				if len(sk) == 2 {
+				switch len(sk) {
+				case 2:
 					for _, message := range result.Messages {
 						if message.Name == sk[0] {
 							for _, submessage := range message.Messages {
@@ -454,19 +476,21 @@ out:
 									return &submessage, nil
 								}
 							}
-							return nil, errors.New("message " + kind + " not found")
+							return nil, errors.New("[1] message " + kind + " not found")
 						}
 					}
-					return nil, errors.New("message " + kind + " not found")
+					return nil, errors.New("[2] message " + kind + " not found")
+				default:
+					fmt.Printf("IMPORT : %#v", sk)
+					return nil, nil
 				}
-				return nil, errors.New("message " + kind + " not found")
 			}
 			for _, message := range result.Messages {
 				if message.Name == kind {
 					return &message, nil
 				}
 			}
-			return nil, errors.New("message " + kind + " not found")
+			return nil, errors.New("[4] message " + kind + " not found")
 		},
 		"usesHTTP": func() bool {
 			for _, imp := range result.Imports {
@@ -475,6 +499,9 @@ out:
 				}
 			}
 			return false
+		},
+		"sharedImports": func() map[string]string {
+			return sharedImports
 		},
 		"dump": func(target interface{}) string {
 			return halp.SPrint(target)
@@ -489,7 +516,9 @@ out:
 			}
 			continue
 		}
-
+		if err != nil {
+			log.Printf("error processing %q : %v", tpl, err)
+		}
 		if !debug {
 			tpl = strings.Replace(tpl, ".tmpl", "", -1)
 			log.Printf("writing %s into %s", filepath.Base(tpl), deployTo)

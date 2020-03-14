@@ -1,0 +1,72 @@
+package {{ projectName }}
+
+import (
+	"context"
+	netHTTP "net/http"
+
+	"github.com/go-kit/kit/log"
+	"github.com/satori/go.uuid"
+	"google.golang.org/grpc/metadata"
+
+	kitGRPC "github.com/go-kit/kit/transport/grpc"
+	kitHTTP "github.com/go-kit/kit/transport/http"
+)
+
+const ContextKeyRequestId = "request-id"
+
+// GRPC management server request id maker
+func CreateGRPCServerRequestIDInContext(_ log.Logger) kitGRPC.ServerRequestFunc {
+	return func(ctx context.Context, _ metadata.MD) context.Context {
+		requestID := uuid.NewV4().String() // TODO : import "github.com/satori/go.uuid"
+		return context.WithValue(ctx, ContextKeyRequestId, requestID)
+	}
+}
+
+// servers before
+func GRPCRequestIDToServerContext(_ log.Logger) kitGRPC.ServerRequestFunc {
+	return func(ctx context.Context, md metadata.MD) context.Context {
+		if hdr, ok := md[string(ContextKeyRequestId)]; ok {
+			cID := hdr[len(hdr)-1]
+			ctx = context.WithValue(ctx, ContextKeyRequestId, cID)
+		}
+		return ctx
+	}
+}
+
+// servers after
+func ReturnRequestIDFromServerContext(_ log.Logger) func(context.Context, *metadata.MD, *metadata.MD) context.Context {
+	return func(ctx context.Context, _ *metadata.MD, md *metadata.MD) context.Context {
+		if hdr, ok := ctx.Value(ContextKeyRequestId).(string); ok {
+			*md = metadata.Join(*md, metadata.Pairs(string(ContextKeyRequestId), hdr))
+		}
+		return ctx
+	}
+}
+
+// GRPC client request id setter
+func PutRequestIDInGRPCMetadata(_ log.Logger) func(context.Context, *metadata.MD) context.Context {
+	return func(ctx context.Context, md *metadata.MD) context.Context {
+		if hdr, ok := ctx.Value(ContextKeyRequestId).(string); ok {
+			(*md)[string(ContextKeyRequestId)] = append((*md)[string(ContextKeyRequestId)], hdr)
+		}
+		return ctx
+	}
+}
+
+// GRPC client request id retriever
+func RequestIDFromGRPCServer(_ log.Logger) func(context.Context, metadata.MD, metadata.MD) context.Context {
+	return func(ctx context.Context, _ metadata.MD, md metadata.MD) context.Context {
+		if hdr, ok := md[string(ContextKeyRequestId)]; ok {
+			ctx = context.WithValue(ctx, ContextKeyRequestId, hdr[len(hdr)-1])
+		}
+		return ctx
+	}
+}
+
+// HTTP management server request id maker
+func CreateHTTPServerRequestIDInContext(_ log.Logger) kitHTTP.RequestFunc {
+	return func(ctx context.Context, r *netHTTP.Request) context.Context {
+		requestID := uuid.NewV4().String()
+		return context.WithValue(ctx, ContextKeyRequestId, requestID)
+	}
+}

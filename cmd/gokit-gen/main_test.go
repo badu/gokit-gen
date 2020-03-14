@@ -7,11 +7,12 @@ import (
 )
 
 func Test(t *testing.T) {
+
 	const (
 		templatesDir = "./../../templates"
-		deployTo     = "/home/badu/appetize/credit-accounts-transactions/src/bitbucket.org/appetize_backend/credit-accounts-transactions/pkg/generated"
-		protoFile    = "/home/badu/appetize/protorepo/src/bitbucket.org/appetize_backend/protorepo/credit_accounts/credit_accounts_transactions.proto"
-		packageName  = "bitbucket.org/appetize_backend/credit-accounts-transactions/pkg/generated"
+		deployTo     = "/home/badu/go.workspace/go-kit-gen-pub/src/github.com/badu/gokit-gen/example/poc/gen/"
+		protoFile    = "/home/badu/go.workspace/go-kit-gen-pub/src/github.com/badu/gokit-gen/example/poc/pb/example.proto"
+		packageName  = "github.com/badu/gokit-gen/example/poc/gen"
 	)
 	/**
 	const (

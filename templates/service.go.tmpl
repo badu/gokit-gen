@@ -1,5 +1,5 @@
 {{/* functions signature */}}
-{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error){{ end }}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.GoKind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.GoKind}},{{- end }} error){{ end }}
 {{ define "repoSignature" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}res{{.PublicName}},{{- end }} err:= s.repo.{{ .Name }}(ctx {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}}{{- else }}{{lowerFirst .PublicName}}{{- end }}{{- end }}){{ end }}
 {{ define "serviceReturn" }}{{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}res{{.PublicName}},{{- end }}nil{{ end }}
 {{- if ne (len .Services) 0}}
@@ -12,6 +12,7 @@ import(
     "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
     {{ if hasStreaming }}pb "{{ go_package }}"{{end}}
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
 )
 
 type Service interface {

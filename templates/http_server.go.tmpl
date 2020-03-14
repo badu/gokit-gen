@@ -10,10 +10,14 @@ import(
 	"github.com/go-kit/kit/log"
     "github.com/go-kit/kit/log/level"
     "github.com/gorilla/mux"
+    "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"github.com/go-kit/kit/endpoint"
 
     pb "{{ go_package }}"
-    "github.com/go-kit/kit/endpoint"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
     kitHTTP "github.com/go-kit/kit/transport/http"
+    kitJWT "github.com/go-kit/kit/auth/jwt"
 )
 
 {{- range $service := .Services }}
@@ -26,30 +30,6 @@ import(
                     encode{{.Name}}HTTPResponse(logger),
                     options...,
                 )
-            }
-
-            func decode{{.Name}}HTTPRequest(logger log.Logger) func(context.Context, *http.Request) (interface{}, error){
-                return func(ctx context.Context, r *http.Request) (interface{}, error) {
-                    var request pb.{{.InKind}}
-                    if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-                        level.Debug(logger).Log("json_decode_error",err)
-                        return nil, err
-                    }
-                    return New{{.InKind}}FromPB(&request), nil
-                }
-            }
-
-            func encode{{.Name}}HTTPResponse(logger log.Logger) func(ctx context.Context, w http.ResponseWriter, response interface{}) error{
-                return func(ctx context.Context, w http.ResponseWriter, resp interface{}) error{
-                    result, ok := resp.(*{{.OutKind}})
-                    if !ok{
-                        err :=  fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
-                        level.Error(logger).Log("encode{{.Name}}HTTPResponse",err)
-                        return err
-                    }
-                    payload := NewPBFrom{{.OutKind}}(result)
-                    return json.NewEncoder(w).Encode(payload)
-                }
             }
         {{- end }} 
     {{- end}}
@@ -71,5 +51,64 @@ import(
     }
 {{- end }} {{/* range services */}}
 
+func GRPCToJSONError(log log.Logger) func(context.Context, error, http.ResponseWriter) {
+	return func(ctx context.Context, err error, w http.ResponseWriter) {
+		if err == nil {
+			return
+		}
+		type errorWrapper struct {
+			Error string `json:"error"`
+		}
+		// put headers, no matter what
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if headerer, ok := err.(kitHTTP.Headerer); ok {
+			for k, values := range headerer.Headers() {
+				for _, v := range values {
+					w.Header().Add(k, v)
+				}
+			}
+		}
+
+		// test for JWT error
+		jwtErr, isErr := ctx.Value(kitJWT.JWTClaimsContextKey).(error)
+		if isErr {
+			w.WriteHeader(http.StatusUnauthorized)
+			encErr := json.NewEncoder(w).Encode(errorWrapper{Error: "access denied : " + jwtErr.Error()})
+			if encErr != nil {
+				level.Error(log).Log("panic_scenario", encErr)
+			}
+			return
+		}
+		// test for GRPC status error
+		statusErr := status.Convert(err)
+		if statusErr != nil {
+			code := statusErr.Code()
+			switch code {
+			case codes.InvalidArgument:
+				w.WriteHeader(http.StatusBadRequest)
+			case codes.NotFound:
+				w.WriteHeader(http.StatusNotFound)
+			case codes.AlreadyExists:
+				w.WriteHeader(http.StatusConflict)
+			case codes.PermissionDenied:
+				w.WriteHeader(http.StatusUnauthorized)
+			case codes.ResourceExhausted:
+				w.WriteHeader(http.StatusForbidden)
+			case codes.Internal:
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+			encErr := json.NewEncoder(w).Encode(errorWrapper{Error: err.Error()})
+			if encErr != nil {
+				panic(encErr)
+			}
+			return
+		}
+		// default - not GRPC status error nor JWT error
+		encErr := json.NewEncoder(w).Encode(errorWrapper{Error: err.Error()})
+		if encErr != nil {
+			level.Error(log).Log("panic_scenario", encErr)
+		}
+	}
+}
 {{- end }}{{/* we have service */}}
 {{- end }}{{/* uses HTTP */}}

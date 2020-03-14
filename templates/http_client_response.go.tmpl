@@ -1,0 +1,41 @@
+{{- if usesHTTP }}{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "context"
+	"fmt"
+	"net/url"
+
+    "google.golang.org/grpc"
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/log/level"
+    "github.com/go-kit/kit/endpoint"
+
+    pb "{{ go_package }}"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
+    kitHTTP "github.com/go-kit/kit/transport/http"
+)
+
+{{/* service interface implementation */}}
+{{- range .Services }}
+    {{- range .Methods}}            
+        {{ if .NoStreaming}}            
+            func decode{{.Name}}HTTPResponse(logger log.Logger) func(context.Context, *http.Response)(interface{},error){
+                return func(ctx context.Context, resp *http.Response) (interface{}, error) {
+                    if resp.StatusCode != http.StatusOK {
+                        defer resp.Body.Close()
+                        body, _ := ioutil.ReadAll(resp.Body)
+                        return nil, errors.New(string(body))
+                    }		
+                    var response *pb.{{.OutKind}}                    
+                    if err := json.NewDecoder(resp.Body).Decode(&response);err!=nil{
+                        level.Error(logger).Log("decode{{.Name}}HTTPResponse",err)
+                        return nil, err
+                    }
+                    return New{{.OutKind}}FromPB(response), nil
+                }
+            }
+        {{- end }} {{/* streaming ifs*/}}
+    {{ end }} {{/* range Method */}}
+{{- end }} {{/* range services */}}
+{{- end }}{{/* we have service */}}{{- end }}{{/* uses HTTP */}}

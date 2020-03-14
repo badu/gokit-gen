@@ -5,37 +5,57 @@ import(
 )
 {{/* enums */}}
 {{- range .Enums}}
-  {{ $enumName := .PublicName }}
-  type {{ $enumName }} int
-  const(
-  {{- range .Fields }}
-     {{ .PublicName }} {{ $enumName }} = {{ .Kind }}
-  {{- end }}
-  ){{/* end Go const*/}}
+   {{- if not .FromShared }} 
+   {{ $enumName := .PublicName }}
+   type {{ $enumName }} int
+   const(
+   {{- range .Fields }}
+      {{ .PublicName }} {{ $enumName }} = {{ .GoKind }}
+   {{- end }}
+   ){{/* end Go const*/}}
+   {{- end }}
 {{- end }}
 {{/*end enums*/}}
 
 {{/* messages */}}
 {{ range .Messages }}
- type {{ .Name }} struct {
-  {{- range .Fields }}
-     {{- if .IsOneOf }}
-          // TODO oneOf {{ .PublicName }} {{.GoKind }}
-     {{- else if .IsMap }}
-          // TODO map {{ .PublicName }} {{.GoKind }}
-     {{- else if .IsReserved }}
-          // TODO reserved {{ .PublicName }} {{.GoKind }}
-     {{- else if .IsBasic }}
-         {{ .PublicName }} {{ .GoKind }}  
-     {{- else if .IsRepeated}}
-         {{ .PublicName }} []{{ .GoKind }}
-     {{- else if isEnumField . }}
-         {{ .PublicName }} {{ .GoKind }} 
-     {{- else }}
-         {{ .PublicName }} *{{ .GoKind }}
-     {{- end }}
-  {{- end }}
-  {{/* end range .Field */}}
-}
-{{ end}}
+   {{- if not .FromShared }}
+   type {{ .Name }} struct {
+   {{- range .Fields }}
+      {{- if .IsOneOf }}
+            // TODO oneOf {{ .PublicName }} {{.GoKind }}
+      {{- else if .IsMap }}
+            // TODO map {{ .PublicName }} {{.GoKind }}
+      {{- else if .IsReserved }}
+            // TODO reserved {{ .PublicName }} {{.GoKind }}
+      {{- else if .IsBasic }}
+            {{- if .FromShared }}
+               // TODO : {{ .PublicName }} {{ .GoKind }} from shared {{ .FromPackage }}
+            {{- else }}
+               {{ .PublicName }} {{ .GoKind }}
+            {{- end }}  
+      {{- else if .IsRepeated}}
+            {{- if .FromShared }}
+               // TODO : {{ .PublicName }} []{{ .GoKind }} from shared {{ .FromPackage }}
+            {{- else }}
+               {{ .PublicName }} []{{ .GoKind }}
+            {{- end }}
+      {{- else if isEnumField . }}
+            {{- if .FromShared }}
+               {{ .PublicName }} {{ .GoKind }} // enum from shared {{ .FromPackage }}
+            {{- else }}
+               {{ .PublicName }} {{ .GoKind }}
+            {{- end }}
+      {{- else }}
+            {{- if .FromShared }}
+               {{ .PublicName }} *{{ .GoKind }} // from shared {{ .FromPackage }}
+            {{- else }}
+               {{ .PublicName }} *{{ .GoKind }}
+            {{- end }}
+      {{- end }}
+   {{- end }}
+   {{/* end range .Field */}}
+   }
+   {{ end }} {{/* not from shared */}}
+{{ end }}
 {{/* end range .File.MessageType */}}

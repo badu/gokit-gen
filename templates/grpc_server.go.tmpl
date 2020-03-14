@@ -9,6 +9,7 @@ import(
     "github.com/go-kit/kit/log/level"
 
     pb "{{ go_package }}"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
     kitGRPC "github.com/go-kit/kit/transport/grpc"
 )
 
@@ -51,52 +52,6 @@ func NewGRPCServer(endpoints Endpoints, logger log.Logger, options ...kitGRPC.Se
         {{- end }} {{/* range services */}}
 	}, nil
 }
-
-{{- range $service := .Services }}
-    {{- range $method := $service.Methods }}
-        {{ if $method.NoStreaming }}
-            func decode{{.Name}}GRPCRequest(logger log.Logger) func(context.Context, interface{})(interface{},error){
-                return func(ctx context.Context, req interface{}) (interface{}, error) {
-                    pbReq, ok := req.(*pb.{{.InKind}})
-                    if !ok{
-                        err := fmt.Errorf("expecting *pb.{{.InKind}} received %T", req)
-                        level.Error(logger).Log("decode{{.Name}}GRPCRequest",err)
-                        return nil, err
-                    }
-                    // TODO : validate protobuf
-                    return New{{.InKind}}FromPB(pbReq), nil
-                }
-            }
-
-            func encode{{.Name}}GRPCResponse(logger log.Logger) func(context.Context, interface{})(interface{},error){
-                return func(ctx context.Context, resp interface{}) (interface{}, error) {
-                    domResp, ok := resp.(*{{.OutKind}})
-                    if !ok{
-                        err :=  fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
-                        level.Error(logger).Log("encode{{.Name}}GRPCRequest",err)
-                        return nil, err
-                    }				
-                    return NewPBFrom{{.OutKind}}(domResp), nil
-                }
-            }
-        {{- else }}
-            // streaming decoder : nothing to do, just pass it over
-            // it will be service responsibility to decode
-           func decode{{.Name}}GRPCStreamRequest(logger log.Logger) func(context.Context, interface{})(interface{},error){
-               return func(ctx context.Context, req interface{}) (interface{}, error) {
-                   return req, nil
-               }
-           }
-           // streaming encoder : nothing to do, just pass it over
-           // it will be service responsibility to encode
-           func encode{{.Name}}GRPCStreamResponse(logger log.Logger) func(context.Context, interface{})(interface{},error){
-               return func(ctx context.Context, resp interface{}) (interface{}, error) {
-                   return resp, nil
-               }
-           }
-        {{- end }} 
-    {{- end}}
-{{- end }}
 
 {{- range $service := .Services }}
     {{ $serviceName := .Name | upperFirst }}

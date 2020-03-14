@@ -1,0 +1,40 @@
+{{- if usesHTTP }}{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "context"
+	"fmt"
+    "net/http"
+	"encoding/json"
+		
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/log/level"
+    "github.com/gorilla/mux"
+    "github.com/go-kit/kit/endpoint"
+
+    pb "{{ go_package }}"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
+    
+    kitHTTP "github.com/go-kit/kit/transport/http"
+)
+
+{{- range $service := .Services }}
+    {{- range $method := $service.Methods }}
+        {{ if $method.NoStreaming }}
+           func encode{{.Name}}HTTPResponse(logger log.Logger) func(ctx context.Context, w http.ResponseWriter, response interface{}) error{
+                return func(ctx context.Context, w http.ResponseWriter, resp interface{}) error{
+                    result, ok := resp.(*{{.OutKind}})
+                    if !ok{
+                        err :=  fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
+                        level.Error(logger).Log("encode{{.Name}}HTTPResponse",err)
+                        return err
+                    }
+                    payload := NewPBFrom{{.OutKind}}(result)
+                    return json.NewEncoder(w).Encode(payload)
+                }
+            }
+        {{- end }} 
+    {{- end}}
+{{- end }}
+{{- end }}{{/* we have service */}}
+{{- end }}{{/* uses HTTP */}}

@@ -25,12 +25,15 @@ type Proto struct {
 	Enums       []Enum
 	Error       *ErrNode
 	EnumsMap    map[string]string
+	IsShared    bool
 }
 
 type Service struct {
-	Name    string
-	Methods []Method
-	Options Options
+	Name        string
+	Methods     []Method
+	Options     Options
+	FromShared  bool
+	FromPackage string
 }
 
 type Services []Service
@@ -107,20 +110,24 @@ func (m *Method) GetHTTPRoute() string {
 }
 
 type Message struct {
-	Name     string
-	Fields   Fields
-	Options  Options
-	Enums    []Enum
-	Messages []Message // nested messages
-	IsNested bool
+	Name        string
+	Fields      Fields
+	Options     Options
+	Enums       []Enum
+	Messages    []Message // nested messages
+	IsNested    bool
+	FromShared  bool
+	FromPackage string
 }
 
 type Enum struct {
-	Name       string
-	ParentName string
-	Options    Options
-	Fields     Fields
-	IsEmbedded bool
+	Name        string
+	ParentName  string
+	Options     Options
+	Fields      Fields
+	IsEmbedded  bool
+	FromShared  bool
+	FromPackage string
 }
 
 func (e *Enum) PublicName() string {
@@ -139,6 +146,8 @@ type Field struct {
 	IsMap       bool
 	IsOneOf     bool
 	IsReserved  bool
+	FromShared  bool
+	FromPackage string
 }
 
 type Fields []Field
@@ -150,14 +159,9 @@ func (coll Fields) FirstPublicName() string {
 	return ""
 }
 
-func (coll Fields) L() error {
-	log.Printf("%d fields", len(coll))
-	return nil
-}
-
 func (f *Field) IsBasic() bool {
 	switch f.Kind {
-	case "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32", "sfixed64", "sint32", "sint64", "string", "uint32", "uint64", "google.protobuf.Timestamp":
+	case "bool", "bytes", "double", "fixed32", "fixed64", "float", "int32", "int64", "sfixed32", "sfixed64", "sint32", "sint64", "string", "uint32", "uint64":
 		return true
 	}
 	return false
@@ -195,8 +199,6 @@ func getKind(kind string) string {
 		return "uint32"
 	case "uint64":
 		return "uint64"
-	case "google.protobuf.Timestamp":
-		return "timestamp.Timestamp"
 	}
 	return kind
 }
@@ -235,8 +237,9 @@ func (f *Field) GoKind() string {
 		return "uint32"
 	case "uint64":
 		return "uint64"
-	case "google.protobuf.Timestamp":
-		return "timestamp.Timestamp"
+	}
+	if strings.Contains(f.Kind, ".") {
+		return strings.Replace(f.Kind, ".", "", -1)
 	}
 	return f.Kind
 }
@@ -275,8 +278,6 @@ func (f *Field) ZeroValue() string {
 		return "0"
 	case "uint64":
 		return "0"
-	case "google.protobuf.Timestamp":
-		return "&timestamp.Timestamp{}"
 	}
 	return "nil"
 }
@@ -285,9 +286,9 @@ func (f *Field) PublicName() string {
 	if len(f.Name) == 0 {
 		return ""
 	}
-	name := ""
 	if strings.Contains(f.Name, "_") {
 		// clean enum _
+		name := ""
 		nameParts := strings.Split(f.Name, "_")
 		for _, part := range nameParts {
 			name += strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
@@ -367,7 +368,7 @@ func getIdent(target *string, node antlr.TerminalNode) {
 	*target = node.GetText()
 }
 
-func extractConstant(ctx parser.IConstantContext) string {
+func extractConstant(ctx parser.IConstantContext, proto *Proto) string {
 	ct, ok := ctx.(*parser.ConstantContext)
 	if !ok {
 		log.Print("expecting *ConstantContext")
@@ -399,7 +400,7 @@ func extractConstant(ctx parser.IConstantContext) string {
 	return ct.GetText()
 }
 
-func makeOptionVars(ctx []parser.IOptionDeclVarContext) []KeyValue {
+func makeOptionVars(ctx []parser.IOptionDeclVarContext, proto *Proto) []KeyValue {
 	var result []KeyValue
 
 	for _, dvDecl := range ctx {
@@ -417,13 +418,13 @@ func makeOptionVars(ctx []parser.IOptionDeclVarContext) []KeyValue {
 			continue
 		}
 
-		optField := KeyValue{Key: dvCtx.OptionName().GetText(), Value: extractConstant(dvCtx.Constant())}
+		optField := KeyValue{Key: dvCtx.OptionName().GetText(), Value: extractConstant(dvCtx.Constant(), proto)}
 		result = append(result, optField)
 	}
 	return result
 }
 
-func makeOption(ctx *parser.OptionContext) Option {
+func makeOption(ctx *parser.OptionContext, proto *Proto) Option {
 	var result Option
 	nameCtx, ok := ctx.OptionName().(*parser.OptionNameContext)
 	if !ok {
@@ -449,18 +450,18 @@ func makeOption(ctx *parser.OptionContext) Option {
 			log.Print("expecting *OptionDeclContext")
 			return result
 		}
-		optVals := makeOptionVars(od.AllOptionDeclVar())
+		optVals := makeOptionVars(od.AllOptionDeclVar(), proto)
 		result.Values = append(result.Values, optVals...)
 	}
 
 	if ctx.Constant() != nil {
 		result.IsConstant = true
-		result.Value = extractConstant(ctx.Constant())
+		result.Value = extractConstant(ctx.Constant(), proto)
 	}
 	return result
 }
 
-func makeOptions(ctx []parser.IOptionContext) Options {
+func makeOptions(ctx []parser.IOptionContext, proto *Proto) Options {
 	var result Options
 	for _, optDecl := range ctx {
 		optCtx, ok := optDecl.(*parser.OptionContext)
@@ -468,12 +469,12 @@ func makeOptions(ctx []parser.IOptionContext) Options {
 			log.Print("expecting *OptionContext")
 			continue
 		}
-		result = append(result, makeOption(optCtx))
+		result = append(result, makeOption(optCtx, proto))
 	}
 	return result
 }
 
-func makeKeyValueOptions(ctx []parser.IKeyValueContext) Options {
+func makeKeyValueOptions(ctx []parser.IKeyValueContext, proto *Proto) Options {
 	var result Options
 	for _, kvDecl := range ctx {
 		kvCtx, ok := kvDecl.(*parser.KeyValueContext)
@@ -490,13 +491,13 @@ func makeKeyValueOptions(ctx []parser.IKeyValueContext) Options {
 			continue
 		}
 
-		opt := Option{Name: kvCtx.OptionName().GetText(), Value: extractConstant(kvCtx.Constant())}
+		opt := Option{Name: kvCtx.OptionName().GetText(), Value: extractConstant(kvCtx.Constant(), proto)}
 		result = append(result, opt)
 	}
 	return result
 }
 
-func makeEnumFields(ctx []parser.IEnumFieldContext) Fields {
+func makeEnumFields(ctx []parser.IEnumFieldContext, proto *Proto) Fields {
 	var result Fields
 	for _, enuFieldDecl := range ctx {
 		enuFieldCtx, ok := enuFieldDecl.(*parser.EnumFieldContext)
@@ -505,9 +506,9 @@ func makeEnumFields(ctx []parser.IEnumFieldContext) Fields {
 			continue
 		}
 
-		field := Field{Name: enuFieldCtx.Ident().GetText(), Kind: enuFieldCtx.IntLit().GetText(), IsEnumField: true}
+		field := Field{Name: enuFieldCtx.Ident().GetText(), Kind: enuFieldCtx.IntLit().GetText(), IsEnumField: true, FromShared: proto.IsShared, FromPackage: proto.PackageName}
 
-		options := makeKeyValueOptions(enuFieldCtx.AllKeyValue())
+		options := makeKeyValueOptions(enuFieldCtx.AllKeyValue(), proto)
 		field.Options = append(field.Options, options...)
 
 		result = append(result, field)
@@ -515,7 +516,7 @@ func makeEnumFields(ctx []parser.IEnumFieldContext) Fields {
 	return result
 }
 
-func makeEnums(ctx []parser.IEnumContext, parentName string) []Enum {
+func makeEnums(ctx []parser.IEnumContext, parentName string, proto *Proto) []Enum {
 	var result []Enum
 	for _, enuDecl := range ctx {
 		enumCtx, ok := enuDecl.(*parser.EnumContext)
@@ -524,7 +525,7 @@ func makeEnums(ctx []parser.IEnumContext, parentName string) []Enum {
 			continue
 		}
 
-		enum := Enum{}
+		enum := Enum{FromShared: proto.IsShared, FromPackage: proto.PackageName}
 		getIdent(&enum.Name, enumCtx.Ident())
 
 		declCtx, ok := enumCtx.EnumDecl().(*parser.EnumDeclContext)
@@ -533,10 +534,10 @@ func makeEnums(ctx []parser.IEnumContext, parentName string) []Enum {
 			continue
 		}
 
-		enuOpts := makeOptions(declCtx.AllOption())
+		enuOpts := makeOptions(declCtx.AllOption(), proto)
 		enum.Options = append(enum.Options, enuOpts...)
 
-		enuFields := makeEnumFields(declCtx.AllEnumField())
+		enuFields := makeEnumFields(declCtx.AllEnumField(), proto)
 		enum.Fields = append(enum.Fields, enuFields...)
 		enum.ParentName = parentName
 		enum.IsEmbedded = parentName != ""
@@ -546,7 +547,7 @@ func makeEnums(ctx []parser.IEnumContext, parentName string) []Enum {
 	return result
 }
 
-func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string) Fields {
+func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string, proto *Proto) Fields {
 	var result Fields
 	for _, afCtx := range ctx {
 		fieldCtx, ok := afCtx.(*parser.FieldContext)
@@ -581,7 +582,7 @@ func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string) Fields {
 		}
 
 		kind := fieldCtx.FieldType().GetText()
-		field := Field{Name: name, Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil}
+		field := Field{Name: name, Pos: fieldCtx.IntLit().GetText(), IsRepeated: fieldCtx.REPEATED() != nil, FromShared: proto.IsShared, FromPackage: proto.PackageName}
 
 		// fix embed enums fields
 		if alterName, has := enumsMap[kind]; has {
@@ -596,7 +597,7 @@ func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string) Fields {
 				log.Printf("expecting *FieldOptsContext got %T", fieldCtx.FieldOpts())
 				continue
 			}
-			options := makeKeyValueOptions(fieldOptsCtx.AllKeyValue())
+			options := makeKeyValueOptions(fieldOptsCtx.AllKeyValue(), proto)
 			field.Options = append(field.Options, options...)
 		}
 
@@ -605,7 +606,7 @@ func makeFields(ctx []parser.IFieldContext, enumsMap map[string]string) Fields {
 	return result
 }
 
-func makeMapFields(ctx []parser.IMapFieldContext) Fields {
+func makeMapFields(ctx []parser.IMapFieldContext, proto *Proto) Fields {
 	var result Fields
 	for _, mapDecl := range ctx {
 		fieldCtx, ok := mapDecl.(*parser.MapFieldContext)
@@ -635,7 +636,7 @@ func makeMapFields(ctx []parser.IMapFieldContext) Fields {
 		}
 
 		mapInfo := KeyValue{Key: fieldCtx.KeyType().GetText(), Value: fieldCtx.FieldType().GetText()}
-		field := Field{Name: fieldCtx.Ident().GetText(), Pos: fieldCtx.IntLit().GetText(), MapKind: mapInfo, IsMap: true}
+		field := Field{Name: fieldCtx.Ident().GetText(), Pos: fieldCtx.IntLit().GetText(), MapKind: mapInfo, IsMap: true, FromShared: proto.IsShared, FromPackage: proto.PackageName}
 
 		if fieldCtx.FieldOpts() != nil {
 			fieldOptsCtx, ok := fieldCtx.FieldOpts().(*parser.FieldOptsContext)
@@ -643,7 +644,7 @@ func makeMapFields(ctx []parser.IMapFieldContext) Fields {
 				log.Printf("expecting *FieldOptsContext got %T", fieldCtx.FieldOpts())
 				continue
 			}
-			options := makeKeyValueOptions(fieldOptsCtx.AllKeyValue())
+			options := makeKeyValueOptions(fieldOptsCtx.AllKeyValue(), proto)
 			field.Options = append(field.Options, options...)
 		}
 
@@ -652,7 +653,7 @@ func makeMapFields(ctx []parser.IMapFieldContext) Fields {
 	return result
 }
 
-func makeOneOfFields(ctx []parser.IOneofContext) (string, Fields) {
+func makeOneOfFields(ctx []parser.IOneofContext, proto *Proto) (string, Fields) {
 	var (
 		result    Fields
 		fieldName string
@@ -687,14 +688,14 @@ func makeOneOfFields(ctx []parser.IOneofContext) (string, Fields) {
 				log.Printf("one of has no value type")
 				continue
 			}
-			field := Field{Name: oofCtx.Ident().GetText(), Kind: oofCtx.FieldType().GetText(), Pos: oofCtx.IntLit().GetText()}
+			field := Field{Name: oofCtx.Ident().GetText(), Kind: oofCtx.FieldType().GetText(), Pos: oofCtx.IntLit().GetText(), FromShared: proto.IsShared, FromPackage: proto.PackageName}
 			if oofCtx.FieldOpts() != nil {
 				fieldOptsCtx, ok := oofCtx.FieldOpts().(*parser.FieldOptsContext)
 				if !ok {
 					log.Printf("expecting *FieldOptsContext got %T", oofCtx.FieldOpts())
 					continue
 				}
-				options := makeKeyValueOptions(fieldOptsCtx.AllKeyValue())
+				options := makeKeyValueOptions(fieldOptsCtx.AllKeyValue(), proto)
 				field.Options = append(field.Options, options...)
 			}
 			result = append(result, field)
@@ -706,6 +707,8 @@ func makeOneOfFields(ctx []parser.IOneofContext) (string, Fields) {
 func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 	var result Message
 	getIdent(&result.Name, ctx.Ident())
+	result.FromShared = proto.IsShared
+	result.FromPackage = proto.PackageName
 
 	declCtx, ok := ctx.MessageDecl().(*parser.MessageDeclContext)
 	if !ok {
@@ -747,10 +750,10 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 			}
 		}
 	}
-	msgOpts := makeOptions(declCtx.AllOption())
+	msgOpts := makeOptions(declCtx.AllOption(), proto)
 	result.Options = append(result.Options, msgOpts...)
 
-	msgEnums := makeEnums(declCtx.AllEnum(), result.Name)
+	msgEnums := makeEnums(declCtx.AllEnum(), result.Name, proto)
 	enumsMap := make(map[string]string)
 	// load previously known enums
 	for k, v := range proto.EnumsMap {
@@ -764,8 +767,7 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 	result.Enums = append(result.Enums, msgEnums...)
 	proto.Enums = append(proto.Enums, msgEnums...)
 
-	msgFields := makeFields(declCtx.AllField(), enumsMap)
-
+	msgFields := makeFields(declCtx.AllField(), enumsMap, proto)
 	result.Fields = append(result.Fields, msgFields...)
 
 	for _, nestedMsg := range declCtx.AllMessage() {
@@ -780,10 +782,10 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 		proto.Messages = append(proto.Messages, nestedMsg)
 	}
 
-	mapFields := makeMapFields(declCtx.AllMapField())
+	mapFields := makeMapFields(declCtx.AllMapField(), proto)
 	result.Fields = append(result.Fields, mapFields...)
 	if declCtx.AllOneof() != nil {
-		fieldName, oneOfFields := makeOneOfFields(declCtx.AllOneof())
+		fieldName, oneOfFields := makeOneOfFields(declCtx.AllOneof(), proto)
 		if len(oneOfFields) > 0 {
 			result.Fields = append(result.Fields, Field{Name: fieldName, IsOneOf: true, OneOf: oneOfFields})
 		}
@@ -791,7 +793,7 @@ func makeMessage(ctx *parser.MessageContext, proto *Proto) Message {
 	return result
 }
 
-func makeMethods(ctx []parser.IRpcContext) []Method {
+func makeMethods(ctx []parser.IRpcContext, proto *Proto) []Method {
 	var result []Method
 	for _, rpcDecl := range ctx {
 		rpcCtx, ok := rpcDecl.(*parser.RpcContext)
@@ -823,7 +825,7 @@ func makeMethods(ctx []parser.IRpcContext) []Method {
 		}
 		rpc := Method{Name: rpcCtx.RpcName().GetText(), IsServerStreaming: serverStream, IsClientStreaming: clientStream}
 
-		rpcOpts := makeOptions(rpcCtx.AllOption())
+		rpcOpts := makeOptions(rpcCtx.AllOption(), proto)
 		rpc.Options = append(rpc.Options, rpcOpts...)
 
 		rpcParams, ok := rpcCtx.RpcParams().(*parser.RpcParamsContext)
@@ -854,40 +856,6 @@ func makeMethods(ctx []parser.IRpcContext) []Method {
 }
 
 func (s *ProtoListener) ExitProto(ctx *parser.ProtoContext) {
-	protoOpts := makeOptions(ctx.AllOption())
-	s.Proto.Options = append(s.Proto.Options, protoOpts...)
-
-	enums := makeEnums(ctx.AllEnum(), "")
-	s.Proto.Enums = append(s.Proto.Enums, enums...)
-
-	for _, msgDecl := range ctx.AllMessage() {
-		msgCtx, ok := msgDecl.(*parser.MessageContext)
-		if !ok {
-			log.Print("expecting *MessageContext")
-			return
-		}
-
-		msg := makeMessage(msgCtx, &s.Proto)
-		s.Proto.Messages = append(s.Proto.Messages, msg)
-	}
-
-	for _, impDecl := range ctx.AllImports() {
-		impCtx, ok := impDecl.(*parser.ImportsContext)
-		if !ok {
-			log.Print("expecting *ImportsContext")
-			return
-		}
-
-		importStr := ""
-		getIdent(&importStr, impCtx.StrLit())
-		unquotedImport, err := strconv.Unquote(importStr)
-		if err != nil {
-			s.Proto.Imports = append(s.Proto.Imports, importStr)
-			log.Printf("error unquoting %q : %v", importStr, err)
-			continue
-		}
-		s.Proto.Imports = append(s.Proto.Imports, unquotedImport)
-	}
 
 	for _, pkgDecl := range ctx.AllPackageName() {
 		pkgCtx, ok := pkgDecl.(*parser.PackageNameContext)
@@ -912,17 +880,54 @@ func (s *ProtoListener) ExitProto(ctx *parser.ProtoContext) {
 		s.Proto.PackageName = packageNames
 	}
 
+	for _, impDecl := range ctx.AllImports() {
+		impCtx, ok := impDecl.(*parser.ImportsContext)
+		if !ok {
+			log.Print("expecting *ImportsContext")
+			return
+		}
+
+		importStr := ""
+		getIdent(&importStr, impCtx.StrLit())
+		unquotedImport, err := strconv.Unquote(importStr)
+		if err != nil {
+			s.Proto.Imports = append(s.Proto.Imports, importStr)
+			log.Printf("error unquoting %q : %v", importStr, err)
+			continue
+		}
+		s.Proto.Imports = append(s.Proto.Imports, unquotedImport)
+	}
+
+	protoOpts := makeOptions(ctx.AllOption(), &s.Proto)
+	s.Proto.Options = append(s.Proto.Options, protoOpts...)
+
+	enums := makeEnums(ctx.AllEnum(), "", &s.Proto)
+	s.Proto.Enums = append(s.Proto.Enums, enums...)
+
+	for _, msgDecl := range ctx.AllMessage() {
+		msgCtx, ok := msgDecl.(*parser.MessageContext)
+		if !ok {
+			log.Print("expecting *MessageContext")
+			return
+		}
+		msg := makeMessage(msgCtx, &s.Proto)
+		s.Proto.Messages = append(s.Proto.Messages, msg)
+	}
+
 	for _, svcDecl := range ctx.AllService() {
 		svcCtx, ok := svcDecl.(*parser.ServiceContext)
 		if !ok {
 			log.Print("expecting *ServiceContext")
 			return
 		}
-		svc := Service{}
+		svc := Service{
+			FromShared:  s.Proto.IsShared,
+			FromPackage: s.Proto.PackageName,
+		}
 		getIdent(&svc.Name, svcCtx.Ident())
-		svcOpts := makeOptions(svcCtx.AllOption())
+		svcOpts := makeOptions(svcCtx.AllOption(), &s.Proto)
 		svc.Options = append(svc.Options, svcOpts...)
-		svcMethods := makeMethods(svcCtx.AllRpc())
+		svcMethods := makeMethods(svcCtx.AllRpc(), &s.Proto)
 		svc.Methods = append(svc.Methods, svcMethods...)
 		s.Proto.Services = append(s.Proto.Services, svc)
 	}

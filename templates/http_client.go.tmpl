@@ -12,6 +12,7 @@ import(
     "github.com/go-kit/kit/endpoint"
 
     pb "{{ go_package }}"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
     kitHTTP "github.com/go-kit/kit/transport/http"
 )
 
@@ -34,17 +35,24 @@ func (c *httpClient) Log() log.Logger {
 {{- range .Services }}
     {{- range .Methods}}            
         {{ if .NoStreaming}}            
-            func (c *httpClient) {{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }} error) {
-                resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }} })
-                if err != nil {
-                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
-                }
-                domResp, ok := resp.(*{{.OutKind}})
-                if !ok{
-                    err := fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
-                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
-                } 
-                return {{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }} nil
+            func (c *httpClient) {{ .Name }}(ctx context.Context {{- $message := messageByKind .InKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.GoKind}}{{- end }}{{- end }})({{- $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{ if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.GoKind}},{{- end }} error) {
+                {{- if eq 0 (len $message.Fields) }}
+                    if _, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }} });err != nil {
+                        return err
+                    } 
+                    return nil
+                {{- else }}
+                    resp, err := c.{{.Name}}Endpoint(ctx,  &{{ .InKind }}{ {{- $message := messageByKind .InKind -}}{{- range $message.Fields }}{{.PublicName}}:{{lowerFirst .PublicName}}, {{- end }} })
+                    if err != nil {
+                        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
+                    }
+                    domResp, ok := resp.(*{{.OutKind}})
+                    if !ok{
+                        err := fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
+                        return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}{{.ZeroValue}},{{- end }} err
+                    } 
+                    return {{ $message := messageByKind .OutKind -}}{{- range $message.Fields }}domResp.{{.PublicName}}, {{- end }} nil
+                {{- end }}
             }   
         {{- end }} {{/* streaming ifs*/}}
     {{ end }} {{/* range Method */}}
@@ -79,39 +87,5 @@ func NewHTTPClient(serverAddr string, logger log.Logger, options ...kitHTTP.Clie
 	}
     return result,nil
 }
-{{/* service interface implementation */}}
-{{- range .Services }}
-    {{- range .Methods}}            
-        {{ if .NoStreaming}}            
-            func encode{{.Name}}HTTPRequest(logger log.Logger) func(context.Context,*http.Request,interface{}) error{
-                return func(ctx context.Context, req *http.Request, request interface{}) error {
-                    req.URL.Path = "{{.GetHTTPRoute}}"
-                    var buf bytes.Buffer                    
-                    if err := json.NewEncoder(&buf).Encode(request);err != nil {
-                         level.Error(logger).Log("encode{{.Name}}HTTPRequest",err)
-                        return err
-                    }
-                    req.Body = ioutil.NopCloser(&buf)
-                    return nil
-                }
-            }
 
-            func decode{{.Name}}HTTPResponse(logger log.Logger) func(context.Context, *http.Response)(interface{},error){
-                return func(ctx context.Context, resp *http.Response) (interface{}, error) {
-                    if resp.StatusCode != http.StatusOK {
-                        defer resp.Body.Close()
-                        body, _ := ioutil.ReadAll(resp.Body)
-                        return nil, errors.New(string(body))
-                    }		
-                    var response *pb.{{.OutKind}}                    
-                    if err := json.NewDecoder(resp.Body).Decode(&response);err!=nil{
-                        level.Error(logger).Log("decode{{.Name}}HTTPResponse",err)
-                        return nil, err
-                    }
-                    return New{{.OutKind}}FromPB(response), nil
-                }
-            }
-        {{- end }} {{/* streaming ifs*/}}
-    {{ end }} {{/* range Method */}}
-{{- end }} {{/* range services */}}
 {{- end }}{{/* we have service */}}{{- end }}{{/* uses HTTP */}}

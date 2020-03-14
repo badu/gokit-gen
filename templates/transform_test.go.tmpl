@@ -2,40 +2,49 @@ package {{ projectName }}_test
 
 import(
     "testing"
+    
     pb "{{ go_package }}"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
     . "{{ goPkg }}"
+
     "github.com/stretchr/testify/assert"
 )
 
 {{/* recurse zeroes */}}
 {{ define "recurseZeroes" }}
 {{- range .Fields }}
-    {{- $fieldIsEnum := isEnumField . -}}
-    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved $fieldIsEnum }}
-        {{ .PublicName }} : {{ .ZeroValue }}, 
-    {{- else if .IsRepeated }}
-        // repeated {{.PublicName}},
-    {{- else }}       
-        {{- $message := messageByKind .Kind -}}
-        {{ .PublicName }} : &{{ $message.Name }}{
-             {{ template "recurseZeroes" $message }}
-        },          
+    {{- if not .FromShared }}
+        {{ if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) .IsTimestamp }}
+            {{ .PublicName }} : {{ .ZeroValue }}, 
+        {{- else if .IsRepeated }}
+            // repeated {{.PublicName}},
+        {{- else }}       
+            {{- $message := messageByKind .Kind -}}
+            {{ .PublicName }} : &{{ $message.Name }}{
+                {{ template "recurseZeroes" $message }}
+            },          
+        {{- end }}
+    {{- else }}
+         {{ .PublicName }} : {{.FromPackage }}.{{.PublicName}}{},
     {{- end }}
 {{- end }}
 {{ end }}
 
 {{ define "recurseZeroesPB" }}
 {{- range .Fields }}
-    {{- $fieldIsEnum := isEnumField . -}}
-    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved $fieldIsEnum }}
-        {{ .PublicName }} : {{ .ZeroValue }}, 
-    {{- else if .IsRepeated }}
-        // repeated {{.PublicName}},
+    {{- if not .FromShared }}
+        {{ if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) .IsTimestamp }}
+            {{ .PublicName }} : {{ .ZeroValue }}, 
+        {{- else if .IsRepeated }}
+            // repeated {{.PublicName}},
+        {{- else }}
+            {{- $message := messageByKind .Kind -}}
+            {{ .PublicName }} : &pb.{{ $message.Name }}{
+                {{- template "recurseZeroesPB" $message -}}
+            },                 
+        {{- end }}
     {{- else }}
-        {{- $message := messageByKind .Kind -}}
-        {{ .PublicName }} : &pb.{{ $message.Name }}{
-             {{ template "recurseZeroesPB" $message }}
-        },                 
+        {{ .PublicName }} : {{.FromPackage }}.{{.PublicName}}{},
     {{- end }}
 {{- end }}
 {{ end }}
@@ -43,49 +52,54 @@ import(
 {{/* recurse asserts */}}
 {{ define "asserts" }}
     {{- range .Fields }}
-    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
-        assert.Equal(t, payload.{{ .PublicName }}, result.{{ .PublicName }})
-    {{- else if .IsRepeated }}
-        // repeated {{.PublicName}},
-    {{- else }}
-        {{- $message := messageByKind .Kind -}}
-        {{- $property := .PublicName -}}
-        {{- range $message.Fields }}
-            {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
-                assert.Equal(t, payload.{{ $property }}.{{ .PublicName }}, result.{{ $property }}.{{ .PublicName }})
+        {{- if not .FromShared }}
+            {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) .IsTimestamp }}
+                assert.Equal(t, payload.{{ .PublicName }}, result.{{ .PublicName }})
+            {{- else if .IsRepeated }}
+                // repeated {{.PublicName}},
             {{- else }}
-                // TODO : test fields assert.Equal(t, payload.{{ $property }}.{{ .PublicName }}, result.{{ $property }}.{{ .PublicName }})
+                {{- $message := messageByKind .Kind -}}
+                {{- $property := .PublicName -}}
+                {{- range $message.Fields }}
+                    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
+                        assert.Equal(t, payload.{{ $property }}.{{ .PublicName }}, result.{{ $property }}.{{ .PublicName }})
+                    {{- else }}
+                        // TODO : test fields assert.Equal(t, payload.{{ $property }}.{{ .PublicName }}, result.{{ $property }}.{{ .PublicName }})
+                    {{- end }}
+                {{- end }}
             {{- end }}
+        {{- else }}
+            // assert.Equal(t, payload.{{ .PublicName }}, result.{{ .PublicName }}) // {{.PublicName}} shared from {{.FromPackage }}
         {{- end }}
-   	{{- end }}
     {{- end }}
 {{ end }}
 
 {{/* transformers*/}}
 {{ range .Messages }}
-{{ $messageName := .Name }} 
- // test transformer *pb.{{.Name}} to *{{.Name}}
- func Test{{ $messageName }}FromPB (t *testing.T) {
-     // TODO : fill me up
-     payload:=pb.{{ .Name }}{ 
-        {{ template "recurseZeroesPB" . }}
-    }
-     result := New{{ $messageName }}FromPB(&payload)
-    {{- template "asserts" . -}}
-    {{- if eq (len .Fields) 0 }} _ = result // zero fields, nothing to assert 
-    {{- end }}
-}
+    {{- if not .FromShared }}
+        {{ $messageName := .Name }} 
+        // test transformer *pb.{{.Name}} to *{{.Name}}
+        func Test{{ $messageName }}FromPB (t *testing.T) {
+            // TODO : fill me up
+            payload:=pb.{{ .Name }}{ 
+                {{ template "recurseZeroesPB" . }}
+            }
+            result := New{{ $messageName }}FromPB(&payload)
+            {{- template "asserts" . -}}
+            {{- if eq (len .Fields) 0 }} _ = result // zero fields, nothing to assert 
+            {{- end }}
+        }
 
-// test transformer *{{.Name}} to *pb.{{.Name}}
-func TestPBFrom{{ $messageName }} (t *testing.T) {
-    // TODO : fill me up
-    payload := {{ .Name }}{
-        {{ template "recurseZeroes" . }}
-    }
-    result := NewPBFrom{{ $messageName }}(&payload)
-    {{- template "asserts" . -}}
-    {{- if eq (len .Fields) 0 }} _ = result // zero fields, nothing to assert 
-    {{- end }}
-}
-
+        // test transformer *{{.Name}} to *pb.{{.Name}}
+        func TestPBFrom{{ $messageName }} (t *testing.T) {
+            // TODO : fill me up
+            payload := {{ .Name }}{
+                {{ template "recurseZeroes" . }}
+            }
+            result := NewPBFrom{{ $messageName }}(&payload)
+            {{- template "asserts" . -}}
+            {{- if eq (len .Fields) 0 }} _ = result // zero fields, nothing to assert 
+            {{- end }}
+        }
+    {{ end }}
 {{- end}}{{/* end range .File.MessageType */}}

@@ -1,0 +1,43 @@
+{{- if ne (len .Services) 0}}
+package {{ projectName }}
+
+import(
+    "context"
+	"fmt"
+	
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/log/level"
+
+    pb "{{ go_package }}"
+    {{ range $key, $value := sharedImports }} {{ $key }} "{{ $value }}" {{- end }}
+    kitGRPC "github.com/go-kit/kit/transport/grpc"
+)
+
+
+{{- range $service := .Services }}
+    {{- range $method := $service.Methods }}
+        {{ if $method.NoStreaming }}
+             func encode{{.Name}}GRPCResponse(logger log.Logger) func(context.Context, interface{})(interface{},error){
+                return func(ctx context.Context, resp interface{}) (interface{}, error) {
+                    domResp, ok := resp.(*{{.OutKind}})
+                    if !ok{
+                        err :=  fmt.Errorf("expecting *{{.OutKind}} received %T", resp)
+                        level.Error(logger).Log("encode{{.Name}}GRPCRequest",err)
+                        return nil, err
+                    }				
+                    return NewPBFrom{{.OutKind}}(domResp), nil
+                }
+            }
+        {{- else }}
+           // streaming encoder : nothing to do, just pass it over
+           // it will be service responsibility to encode
+           func encode{{.Name}}GRPCStreamResponse(logger log.Logger) func(context.Context, interface{})(interface{},error){
+               return func(ctx context.Context, resp interface{}) (interface{}, error) {
+                   return resp, nil
+               }
+           }
+        {{- end }} 
+    {{- end}}
+{{- end }}
+
+{{- end }}{{/* we have service */}}

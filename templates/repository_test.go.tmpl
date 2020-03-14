@@ -1,14 +1,16 @@
-{{/* functions signature */}}
-{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.Kind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .Kind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.Kind}},{{- end }}{{- end }} error){{ end }}
+{{ define "funcSignature" }}{{ .Name }}(ctx context.Context {{- range .In }}{{- $message := messageByKind .GoKind -}}{{- range $message.Fields }},{{ if .IsBasic }}{{lowerFirst .PublicName}} {{.GoKind}}{{- else }}{{lowerFirst .PublicName}} *{{.GoKind}}{{- end }}{{- end }}{{- end }})({{- range .Out }}{{- $message := messageByKind .GoKind -}}{{- range $message.Fields }}{{if .IsRepeated}}[]{{else if .IsBasic}}{{else}}*{{end}}{{.GoKind}},{{- end }}{{- end }} error){{ end }}
 {{- if ne (len .Services) 0}}
 package {{ projectName }}
 
 import(
+    "os"
     "errors"
     "context"	
-    
+    "testing"
+
     "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+    "github.com/stretchr/testify/assert"
 )
 
 func createRepository(t *testing.T) (Repository, error) {
@@ -71,16 +73,38 @@ func createRepository(t *testing.T) (Repository, error) {
 }
 
 {{ range .Services}}
-    {{- range .Methods }}
+    {{ range .Methods }}
    func Test{{.Name}}(t *testing.T){
+        t.Skip("not implemented")        
+        {{ $inMessage := messageByKind .InKind -}}
+        {{ $outMessage := messageByKind .OutKind -}}
         repo, err := createRepository(t)
         if err!=nil{
             t.Fatalf("error : %v",err)
         }
-        _ = repo
-        t.Skip("not implemented")
-    }
-    {{- end }}
-{{- end }}
+        {{ range $outMessage.Fields }}res{{.PublicName}},{{- end }} err := repo.{{ .Name }}(context.Background(){{- range $inMessage.Fields }},{{ if .IsBasic }}{{.ZeroValue}}{{- else }}nil{{- end }}{{- end }})
+        if err!=nil{
+            t.Fatalf("error : %v",err)
+        }        
 
+        {{ range $outMessage.Fields }}
+            {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
+                assert.Equal(t, {{ .ZeroValue }}, res{{ .PublicName }})
+            {{- else if .IsRepeated }}
+                // repeated {{.PublicName}},
+            {{- else }}
+                {{- $subMessage := messageByKind .Kind -}}
+                {{- $property := .PublicName -}}
+                {{- range $subMessage.Fields }}
+                    {{- if or .IsBasic .IsMap .IsOneOf .IsReserved (isEnumField .) }}
+                        assert.Equal(t, {{ .ZeroValue }}, res{{ $property }}.{{ .PublicName }})
+                    {{- else }}
+                        // TODO : test fields assert.Equal(t, payload.{{ $property }}.{{ .PublicName }}, result.{{ $property }}.{{ .PublicName }})
+                    {{- end }}
+                {{- end }}
+            {{- end }}
+        {{- end }}
+    }
+    {{ end }}    
+{{- end }}
 {{- end }}{{/* we have service */}}
